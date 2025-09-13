@@ -55,24 +55,24 @@ func main() {
 	logPipe.Run()
 	defer logPipe.Stop()
 
-	calcPipe := pipeline.CalcPipeline(pipeline.PL_EXCH_UPBIT, pipeline.PL_EXCH_BITHUMB)
+	/* calcPipe := pipeline.CalcPipeline(pipeline.PL_EXCH_UPBIT, pipeline.PL_EXCH_BITHUMB)
 	calcPipe.Run()
 	defer calcPipe.Stop()
 
 	statePipe := pipeline.StatePipeline(pipeline.PL_EXCH_UPBIT, pipeline.PL_EXCH_BITHUMB)
 	statePipe.Run()
 	defer statePipe.Stop()
-	pipeline.ConnectPipeline(statePipe, calcPipe)
+	pipeline.ConnectPipeline(statePipe, calcPipe) */
 
 	upbitConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_UPBIT)
 	upbitConvPipe.Run()
 	defer upbitConvPipe.Stop()
-	pipeline.ConnectPipeline(upbitConvPipe, statePipe)
+	pipeline.ConnectPipeline(upbitConvPipe, logPipe)
 
 	bithumbConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_BITHUMB)
 	bithumbConvPipe.Run()
 	defer bithumbConvPipe.Stop()
-	pipeline.ConnectPipeline(bithumbConvPipe, statePipe)
+	pipeline.ConnectPipeline(bithumbConvPipe, logPipe)
 
 	for {
 		select {

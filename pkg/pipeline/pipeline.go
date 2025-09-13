@@ -80,9 +80,29 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 		case upbit.UPBIT_ORDERBOOK:
 			var d upbit.UpbitOrderbook
 			json.Unmarshal(*data.Bytes, &d)
+			plData.DataType = PL_DT_ORDERBOOK
+			plData.Payload = PlDataOrderbook {
+				Code: NewPlMktCode(d.Code, exch),
+				Timestamp: d.Timestamp,
+				TotalAskSize: d.TotalAskSize,
+				TotalBidSize: d.TotalBidSize,
+				OrderbookUnits: d.OrderbookUnits,
+			}
 		case upbit.UPBIT_CANDLE:
 			var d upbit.UpbitCandle
 			json.Unmarshal(*data.Bytes, &d)
+			plData.DataType = PL_DT_CANDLE
+			plData.Payload = PlDataCandle {
+				Code: NewPlMktCode(d.Code, exch),
+				Timestamp: d.Timestamp,
+				CandleDateTimeKST: d.CandleDateTimeKST,
+				OpeningPrice: d.OpeningPrice,
+				HighPrice: d.HighPrice,
+				LowPrice: d.LowPrice,
+				TradePrice: d.TradePrice,
+				CandleAccTradeVolume: d.CandleAccTradeVolume,
+				CandleAccTradePrice: d.CandleAccTradePrice,
+			}
 		case upbit.UPBIT_ERROR:
 			var d upbit.UpbitError
 			json.Unmarshal(*data.Bytes, &d)
@@ -103,8 +123,21 @@ func LogPipeline() *Pipeline[*PlData, struct{}] {
 			exch = "BITHUMB"
 		}
 		if data.DataType == PL_DT_TICKER {
+			dt = "TICKER"
 			payload := data.Payload.(PlDataTicker)
 			log.Printf("%s %s %s %f", exch, dt, payload.Code, payload.CurrentPrice)
+		} else if data.DataType == PL_DT_TRADE {
+			dt = "TRADE"
+			payload := data.Payload.(PlDataTrade)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, payload)
+		} else if data.DataType == PL_DT_ORDERBOOK {
+			dt = "ORDERBOOK"
+			payload := data.Payload.(PlDataOrderbook)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, payload)
+		} else if data.DataType == PL_DT_CANDLE {
+			dt = "CANDLE"
+			payload := data.Payload.(PlDataCandle)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, payload)
 		}
 		return struct{}{}
 	})

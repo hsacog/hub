@@ -1,6 +1,9 @@
 package pipeline
 
-import "strings"
+import (
+	"hub/pkg/interface/upbit"
+	"strings"
+)
 
 type PlExchange uint8
 const (
@@ -48,6 +51,26 @@ type PlDataTrade struct {
 	TradePrice float64
 	TradeVolume float64
 }
+type PlDataOrderbookUnit = upbit.UpbitOrderbookUnit
+type PlDataOrderbook struct {
+	Code PlMktCode
+	Timestamp int64
+	TotalAskSize float64
+	TotalBidSize float64
+	OrderbookUnits []PlDataOrderbookUnit
+}
+type PlDataCandle struct {
+	Code PlMktCode
+	Timestamp int64
+	CandleDateTimeKST string
+	OpeningPrice         float64
+	HighPrice            float64
+	LowPrice             float64
+	TradePrice           float64
+	CandleAccTradeVolume float64
+	CandleAccTradePrice  float64
+}
+
 type PlData struct {
 	Exchange PlExchange
 	DataType PlDataType

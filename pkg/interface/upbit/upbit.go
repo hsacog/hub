@@ -128,7 +128,7 @@ func (uif *UpbitIF) _run_ws_reader(unit *UpbitIFUnit) {
 					unit.ctl <- IFControl{Type: UPBIT_IF_STOP}
 					return
 				}
-				log.Println("Unexpected websocket error")
+				log.Println("Unexpected websocket error", err)
 			} else {
 				unit.ctl <- IFControl{Type: UPBIT_IF_READ, Payload: &data}
 			}
@@ -261,18 +261,33 @@ func (uif *UpbitIF) Subscribe(ps []command.MktPair) error {
 		uif.state.subMktCodes[code] = struct{}{}
 	}
 	var currentCodes []string	
+	var currentOrderCodes []string
 	for k := range uif.state.subMktCodes {
 		currentCodes = append(currentCodes, k)
+		currentOrderCodes = append(currentOrderCodes, k + ".5")
 	}
-	// fmt.Println("start _subscribe", currentCodes)
+	log.Println("Subscribe: ", currentCodes, currentOrderCodes)
+	
 	uif._subscribe(
 		DataType{
 			Type: "ticker",
 			Codes: currentCodes,
+			IsOnlyRealtime: true,
 		},
 		DataType{
 			Type: "trade",
 			Codes: currentCodes,
+			IsOnlyRealtime: true,
+		},
+		DataType{
+			Type: "orderbook",
+			Codes: currentOrderCodes,
+			IsOnlyRealtime: true,
+		},
+		DataType{
+			Type: "candle.1s",
+			Codes: currentCodes,
+			IsOnlyRealtime: true,
 		},
 	)
 	// fmt.Println("end _subscribe", currentCodes)

@@ -91,8 +91,8 @@ type DataType struct {
 	Type string `json:"type"`
 	Codes []string `json:"codes"`
 	Level int64 `json:"level,omitempty"`
-	IsOnlySnapshot string `json:"is_only_snapshot,omitempty"`
-	IsOnlyRealtime string `json:"is_only_realtime,omitempty"`
+	IsOnlySnapshot bool `json:"is_only_snapshot,omitempty"`
+	IsOnlyRealtime bool `json:"is_only_realtime,omitempty"`
 }
 type Format struct {
 	Format string `json:"format"`

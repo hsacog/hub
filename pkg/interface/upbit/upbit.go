@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,15 +221,37 @@ func (uif *UpbitIF) Run() {
 	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_RESET}
 }
 
-func (uif *UpbitIF) _subscribe(dts ...DataType) error {
+func (uif *UpbitIF) _subscribe(codes []string) error {
 	msg := []any{}
 	msg = append(msg,
 		Ticket {
 			Ticket: uuid.New().String(),
 		},
 	)
-	for _, d := range dts {
-		msg = append(msg, d)
+	for _, opt := range uif.config.Options {
+		dataType := DataType {
+			IsOnlySnapshot: opt.Option.IsOnlySnapshot,
+			IsOnlyRealtime: opt.Option.IsOnlyRealtime,
+		}
+		switch opt.Type {
+		case UPBIT_TICKER:
+			dataType.Type = "ticker"
+			dataType.Codes = codes
+		case UPBIT_TRADE:
+			dataType.Type = "trade"
+			dataType.Codes = codes
+		case UPBIT_ORDERBOOK:
+			var orderCodes []string
+			for _, code := range codes {
+				orderCodes = append(orderCodes, code + "." + strconv.FormatInt(opt.Option.OrderbookUnitSize, 10))
+			}
+			dataType.Type = "orderbook"
+			dataType.Codes = orderCodes
+		case UPBIT_CANDLE:
+			dataType.Type = "candle" + "." + opt.Option.CandleInterval
+			dataType.Codes = codes
+		}
+		msg = append(msg, dataType)
 	}
 	msg = append(msg, 
 		Format {
@@ -261,35 +284,11 @@ func (uif *UpbitIF) Subscribe(ps []command.MktPair) error {
 		uif.state.subMktCodes[code] = struct{}{}
 	}
 	var currentCodes []string	
-	var currentOrderCodes []string
 	for k := range uif.state.subMktCodes {
 		currentCodes = append(currentCodes, k)
-		currentOrderCodes = append(currentOrderCodes, k + ".5")
 	}
-	log.Println("Subscribe: ", currentCodes, currentOrderCodes)
 	
-	uif._subscribe(
-		DataType{
-			Type: "ticker",
-			Codes: currentCodes,
-			IsOnlyRealtime: true,
-		},
-		DataType{
-			Type: "trade",
-			Codes: currentCodes,
-			IsOnlyRealtime: true,
-		},
-		DataType{
-			Type: "orderbook",
-			Codes: currentOrderCodes,
-			IsOnlyRealtime: true,
-		},
-		DataType{
-			Type: "candle.1s",
-			Codes: currentCodes,
-			IsOnlyRealtime: true,
-		},
-	)
+	uif._subscribe(currentCodes)
 	// fmt.Println("end _subscribe", currentCodes)
 	uif.lk.Unlock()
 	return nil
@@ -315,16 +314,29 @@ func (uif *UpbitIF) UnSubscribe(ps []command.MktPair) error {
 	for k := range uif.state.subMktCodes {
 		currentCodes = append(currentCodes, k)
 	}
-	uif._subscribe(
+	/* uif._subscribe(
 		DataType{
 			Type: "ticker",
 			Codes: currentCodes,
+			IsOnlyRealtime: true,
 		},
 		DataType{
 			Type: "trade",
 			Codes: currentCodes,
+			IsOnlyRealtime: true,
 		},
-	)
+		DataType{
+			Type: "orderbook",
+			Codes: currentOrderCodes,
+			IsOnlyRealtime: true,
+		},
+		DataType{
+			Type: "candle.1s",
+			Codes: currentCodes,
+			IsOnlyRealtime: true,
+		},
+	) */
+	uif._subscribe(currentCodes)
 	uif.lk.Unlock()
 	return nil
 }

@@ -11,11 +11,16 @@ import (
 )
 
 /* UPBIT IF */
+type UpbitIFDataOption struct {
+	Type UpbitDT
+	Option UpbitDTOption
+}
 type UpbitIFConfig struct {
 	AccessKey string
 	SecretKey string
 	QuoUrl url.URL
 	ExcUrl url.URL
+	Options []UpbitIFDataOption
 }
 type UpbitIFState struct {
 	validMktCodes map[string]struct{}
@@ -90,7 +95,7 @@ type Ticket struct {
 type DataType struct {
 	Type string `json:"type"`
 	Codes []string `json:"codes"`
-	Level int64 `json:"level,omitempty"`
+	Level float64 `json:"level,omitempty"`
 	IsOnlySnapshot bool `json:"is_only_snapshot,omitempty"`
 	IsOnlyRealtime bool `json:"is_only_realtime,omitempty"`
 }
@@ -106,6 +111,14 @@ const (
 	UPBIT_CANDLE
 	UPBIT_ERROR
 )
+
+type UpbitDTOption struct {
+	IsOnlySnapshot bool
+	IsOnlyRealtime bool
+	Level float64 // FOR UPBIT_ORDERBOOK
+	OrderbookUnitSize int64 // FOR UPBIT_ORDERBOOK
+	CandleInterval string // FOR UPBIT_CANDLE
+}
 
 /*
 UPBIT RESPONSE DATA TYPES

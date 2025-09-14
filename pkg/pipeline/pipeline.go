@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"encoding/json"
+	"fmt"
 	"hub/pkg/interface/upbit"
 	"log"
+	"time"
 )
 
 type Pipeline[T any, R any] struct {
@@ -49,8 +51,22 @@ func (p *Pipeline[T, R]) Stop() {
 }
 
 func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
-	return NewPipeline(0, func (data *upbit.UpbitRawData) *PlData {
+	return NewPipeline(1000, func (data *upbit.UpbitRawData) *PlData {
 		var plData PlData
+		plData.CheckPoints = []PlDataCheckpoint{
+			{
+				name: "recv",
+				ts: data.ReceiveTimestamp,
+			},
+			{
+				name: "main",
+				ts: data.Timestamp,
+			},
+			{
+				name: "conv",
+				ts: time.Now(),
+			},
+		}
 		plData.Exchange = exch
 		switch data.Type {
 		case upbit.UPBIT_TICKER:
@@ -110,9 +126,18 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 }
 
 func LogPipeline() *Pipeline[*PlData, struct{}] {
-	return NewPipeline(0, func (data *PlData) struct {} {
+	return NewPipeline(1000, func (data *PlData) struct {} {
+		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{name: "log", ts: time.Now()})
 		var exch string
 		var dt string
+		checkpoints := ""
+		for i, cp := range data.CheckPoints {
+			checkpoints += fmt.Sprintf("%s >> ", cp.name)
+			if i != len(data.CheckPoints) -1 {
+				checkpoints += fmt.Sprintf("(+%f) >> ", data.CheckPoints[i+1].ts.Sub(cp.ts).Seconds())
+			}
+		}
+		checkpoints += fmt.Sprintf("[ACC +%f]", data.CheckPoints[len(data.CheckPoints)-1].ts.Sub(data.CheckPoints[0].ts).Seconds())
 		if data.Exchange == PL_EXCH_UPBIT {
 			exch = "UPBIT"
 		} else if data.Exchange == PL_EXCH_BITHUMB {
@@ -121,19 +146,19 @@ func LogPipeline() *Pipeline[*PlData, struct{}] {
 		if data.DataType == PL_DT_TICKER {
 			dt = "TICKER"
 			payload := data.Payload.(PlDataTicker)
-			log.Printf("%s %s %s %f", exch, dt, payload.Code, payload.CurrentPrice)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 		} else if data.DataType == PL_DT_TRADE {
 			dt = "TRADE"
 			payload := data.Payload.(PlDataTrade)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, payload)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 		} else if data.DataType == PL_DT_ORDERBOOK {
 			dt = "ORDERBOOK"
 			payload := data.Payload.(PlDataOrderbook)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, payload)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 		} else if data.DataType == PL_DT_CANDLE {
 			dt = "CANDLE"
 			payload := data.Payload.(PlDataCandle)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, payload)
+			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 		}
 		return struct{}{}
 	})

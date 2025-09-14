@@ -65,6 +65,7 @@ UPBIT IF CONTROL
 type IFControl struct {
 	Type IFControlType
 	Payload any
+	Timestamp time.Time
 }
 
 type IFControlType uint8
@@ -249,6 +250,7 @@ type UpbitErrorPayload struct {
 
 type UpbitRawData struct {
 	Type UpbitDT
+	ReceiveTimestamp time.Time
 	Timestamp time.Time
 	Bytes *[]byte
 }

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"hub/pkg/interface/upbit"
 	"strings"
+	"time"
 )
 
 type PlExchange uint8
@@ -71,10 +72,15 @@ type PlDataCandle struct {
 	CandleAccTradePrice  float64
 }
 
+type PlDataCheckpoint struct {
+	name string
+	ts time.Time
+}
 type PlData struct {
 	Exchange PlExchange
 	DataType PlDataType
 	Payload any
+	CheckPoints []PlDataCheckpoint
 }
 type PlState map[PlExchange]map[PlMktCode]float64
 func (s PlState) Copy() PlState {

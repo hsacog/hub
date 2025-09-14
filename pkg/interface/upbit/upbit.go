@@ -105,7 +105,7 @@ func (uif *UpbitIF) _run_ws_ping(delay time.Duration, unit *UpbitIFUnit) {
 		for {
 			select {
 			case <- ticker.C:
-				unit.ctl <- IFControl{Type: UPBIT_IF_PING}
+				unit.ctl <- IFControl{Type: UPBIT_IF_PING, Timestamp: time.Now()}
 			case <- (*unit.ctx).Done():
 				log.Println("stop ping")
 				return
@@ -121,17 +121,17 @@ func (uif *UpbitIF) _run_ws_reader(unit *UpbitIFUnit) {
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 					log.Println("wss connection closed normally:", err)
-					unit.ctl <- IFControl{Type: UPBIT_IF_STOP}
+					unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now()}
 					return
 				}
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseAbnormalClosure) {
 					log.Println("wss connection closed abnormally:", err)
-					unit.ctl <- IFControl{Type: UPBIT_IF_STOP}
+					unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now()}
 					return
 				}
 				log.Println("Unexpected websocket error", err)
 			} else {
-				unit.ctl <- IFControl{Type: UPBIT_IF_READ, Payload: &data}
+				unit.ctl <- IFControl{Type: UPBIT_IF_READ, Payload: &data, Timestamp: time.Now()}
 			}
 		}
 	}()
@@ -150,7 +150,7 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit) {
 						log.Println("send ping message")
 						if err := (*unit.conn).WriteMessage(websocket.PingMessage, nil); err != nil {
 							log.Println("ping error: ", err)
-							unit.ctl <- IFControl{Type: UPBIT_IF_STOP}
+							unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now()}
 						}	
 					}
 					unit.lk.RUnlock()
@@ -160,7 +160,7 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit) {
 					if unit.state == READY {
 						if err := (*unit.conn).WriteMessage(websocket.TextMessage, *data); err != nil {
 							log.Fatal("write error: ", err)
-							unit.ctl <- IFControl{Type: UPBIT_IF_STOP}
+							unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now()}
 						}
 					}
 					unit.lk.RUnlock()
@@ -183,7 +183,7 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit) {
 							plType = UPBIT_CANDLE
 						}
 					}
-					uif.pl <- UpbitRawData{Type: plType, Timestamp: time.Now(), Bytes: data}
+					uif.pl <- UpbitRawData{Type: plType, ReceiveTimestamp: msg.Timestamp, Timestamp: time.Now(), Bytes: data}
 				case UPBIT_IF_RESET:
 					unit.lk.Lock()
 					if unit.state != STOP {
@@ -219,7 +219,7 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit) {
 
 func (uif *UpbitIF) Run() {
 	uif._run_ws_main(&uif.quoUnit)
-	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_RESET}
+	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_RESET, Timestamp: time.Now()}
 }
 
 func (uif *UpbitIF) _subscribe(codes []string) error {
@@ -265,7 +265,7 @@ func (uif *UpbitIF) _subscribe(codes []string) error {
 	if err != nil {
 		return err;
 	}
-	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_WRITE, Payload: &b}
+	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_WRITE, Payload: &b, Timestamp: time.Now()}
 	return nil
 } 
 

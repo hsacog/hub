@@ -23,14 +23,14 @@ func NewUpbitIF(config UpbitIFConfig) (*UpbitIF, chan UpbitRawData) {
 		config: config,
 		quoUnit: UpbitIFUnit{
 			conn: nil,
-			ctl: make(chan IFControl, 2),
+			ctl: make(chan IFControl, 1000),
 			ctx: nil,
 			cancel: nil,
 			state: STOP,
 		},
 		excUnit: UpbitIFUnit{
 			conn: nil,
-			ctl: make(chan IFControl, 2),
+			ctl: make(chan IFControl, 1000),
 			ctx: nil,
 			cancel: nil,
 			state: STOP,
@@ -196,7 +196,6 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit) {
 					unit.lk.Unlock()
 				case UPBIT_IF_STOP:
 					unit.lk.Lock()
-					
 					if unit.state != READY {
 						log.Println("Error: stop in ready state")
 					} else {
@@ -205,7 +204,9 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit) {
 						(*unit.cancel)()
 						(unit.conn).Close()
 						(unit.conn) = nil
-						unit.ctl <- IFControl{Type: UPBIT_IF_RESET}
+						log.Println("IF reset")
+						uif._reset(unit)
+						unit.state = READY
 					}
 					unit.lk.Unlock()
 				}
@@ -222,6 +223,7 @@ func (uif *UpbitIF) Run() {
 }
 
 func (uif *UpbitIF) _subscribe(codes []string) error {
+	log.Println("_subscribe", codes)
 	msg := []any{}
 	msg = append(msg,
 		Ticket {
@@ -289,7 +291,6 @@ func (uif *UpbitIF) Subscribe(ps []command.MktPair) error {
 	}
 	
 	uif._subscribe(currentCodes)
-	// fmt.Println("end _subscribe", currentCodes)
 	uif.lk.Unlock()
 	return nil
 }
@@ -314,28 +315,6 @@ func (uif *UpbitIF) UnSubscribe(ps []command.MktPair) error {
 	for k := range uif.state.subMktCodes {
 		currentCodes = append(currentCodes, k)
 	}
-	/* uif._subscribe(
-		DataType{
-			Type: "ticker",
-			Codes: currentCodes,
-			IsOnlyRealtime: true,
-		},
-		DataType{
-			Type: "trade",
-			Codes: currentCodes,
-			IsOnlyRealtime: true,
-		},
-		DataType{
-			Type: "orderbook",
-			Codes: currentOrderCodes,
-			IsOnlyRealtime: true,
-		},
-		DataType{
-			Type: "candle.1s",
-			Codes: currentCodes,
-			IsOnlyRealtime: true,
-		},
-	) */
 	uif._subscribe(currentCodes)
 	uif.lk.Unlock()
 	return nil

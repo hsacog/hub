@@ -9,6 +9,7 @@ type CommandType uint8
 const (
 	ADD_MKT CommandType = iota
 	REMOVE_MKT
+	STOP
 )
 type MktPair struct {
 	C1 string

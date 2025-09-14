@@ -21,7 +21,7 @@ const (
 	PL_DT_TRADE
 	PL_DT_ORDERBOOK
 	PL_DT_CANDLE
-	PL_Dt_ERROR
+	PL_DT_ERROR
 )
 type PlMktCode struct {
 	C1, C2 string

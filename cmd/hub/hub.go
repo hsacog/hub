@@ -63,9 +63,6 @@ func main() {
 			},
 		},
 	)
-	/* if err := uif.Open(); err != nil {
-		log.Fatal(err)
-	} */
 	uif.Run()
 
 	bif, bch := upbit.NewUpbitIF(
@@ -104,15 +101,6 @@ func main() {
 	logPipe.Run()
 	defer logPipe.Stop()
 
-	/* calcPipe := pipeline.CalcPipeline(pipeline.PL_EXCH_UPBIT, pipeline.PL_EXCH_BITHUMB)
-	calcPipe.Run()
-	defer calcPipe.Stop()
-
-	statePipe := pipeline.StatePipeline(pipeline.PL_EXCH_UPBIT, pipeline.PL_EXCH_BITHUMB)
-	statePipe.Run()
-	defer statePipe.Stop()
-	pipeline.ConnectPipeline(statePipe, calcPipe) */
-
 	upbitConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_UPBIT)
 	upbitConvPipe.Run()
 	defer upbitConvPipe.Stop()
@@ -126,7 +114,8 @@ func main() {
 	for {
 		select {
 		case com := <-cmd_ch:
-			if com.Type == command.ADD_MKT {
+			switch com.Type {
+			case command.ADD_MKT:
 				log.Println("subscribe", com.Payload)
 				var mktPairs []command.MktPair
 				for _, p := range com.Payload {
@@ -134,7 +123,7 @@ func main() {
 				}
 				uif.Subscribe(mktPairs)
 				bif.Subscribe(mktPairs)
-			} else if com.Type == command.REMOVE_MKT {
+			case command.REMOVE_MKT:
 				log.Println("unsubscribe", com.Payload)
 				var mktPairs []command.MktPair
 				for _, p := range com.Payload {
@@ -142,6 +131,7 @@ func main() {
 				}
 				uif.UnSubscribe(mktPairs)
 				bif.UnSubscribe(mktPairs)
+				
 			}
 		case data := <-uch:
 			upbitConvPipe.In() <- &data

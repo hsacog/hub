@@ -42,15 +42,19 @@ func NewPlMktCode(code string, exch PlExchange) PlMktCode {
 }
 type PlDataTicker struct {
 	Code PlMktCode
+	TradePrice float64
+	SignedChangePrice float64
+	SignedChangeRate float64
+	AccTradePrice float64
+	AccTradePrice24h float64
 	Timestamp int64
-	CurrentPrice float64
 }
 type PlDataTrade struct {
 	Code PlMktCode
-	Timestamp int64
 	TradeTimestamp int64
 	TradePrice float64
 	TradeVolume float64
+	Timestamp int64
 }
 type PlDataOrderbookUnit = upbit.UpbitOrderbookUnit
 type PlDataOrderbook struct {
@@ -62,7 +66,7 @@ type PlDataOrderbook struct {
 }
 type PlDataCandle struct {
 	Code PlMktCode
-	Timestamp int64
+	CandleDateTimeUTC string
 	CandleDateTimeKST string
 	OpeningPrice         float64
 	HighPrice            float64
@@ -70,6 +74,7 @@ type PlDataCandle struct {
 	TradePrice           float64
 	CandleAccTradeVolume float64
 	CandleAccTradePrice  float64
+	Timestamp int64
 }
 
 type PlDataCheckpoint struct {

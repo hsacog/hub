@@ -75,8 +75,12 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 			plData.DataType = PL_DT_TICKER
 			plData.Payload = PlDataTicker {
 				Code: NewPlMktCode(d.Code, exch),
+				TradePrice: d.TradePrice,
+				SignedChangePrice: d.SignedChangePrice,
+				SignedChangeRate: d.SignedChangeRate,
+				AccTradePrice: d.AccTradePrice,
+				AccTradePrice24h: d.AccTradePrice24h,
 				Timestamp: d.Timestamp,
-				CurrentPrice: d.TradePrice,
 			}
 		case upbit.UPBIT_TRADE:
 			var d upbit.UpbitTrade
@@ -106,7 +110,7 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 			plData.DataType = PL_DT_CANDLE
 			plData.Payload = PlDataCandle {
 				Code: NewPlMktCode(d.Code, exch),
-				Timestamp: d.Timestamp,
+				CandleDateTimeUTC: d.CandleDateTimeUTC,
 				CandleDateTimeKST: d.CandleDateTimeKST,
 				OpeningPrice: d.OpeningPrice,
 				HighPrice: d.HighPrice,
@@ -114,6 +118,7 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 				TradePrice: d.TradePrice,
 				CandleAccTradeVolume: d.CandleAccTradeVolume,
 				CandleAccTradePrice: d.CandleAccTradePrice,
+				Timestamp: d.Timestamp,
 			}
 		case upbit.UPBIT_ERROR:
 			var d upbit.UpbitError

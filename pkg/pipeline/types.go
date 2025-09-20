@@ -78,8 +78,9 @@ type PlDataCandle struct {
 }
 
 type PlDataCheckpoint struct {
-	name string
-	ts time.Time
+	Name string
+	Ts time.Time
+	Err error
 }
 type PlData struct {
 	Exchange PlExchange

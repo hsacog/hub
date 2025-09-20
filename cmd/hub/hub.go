@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"hub/pkg/command"
 	"hub/pkg/command/api"
-	"net/url"
-	"time"
 	"hub/pkg/interface/upbit"
 	"hub/pkg/pipeline"
+	"hub/pkg/pipeline/kafka"
+	"net/url"
+	"time"
+
 	// "hub/pkg/pipeline/calc"
 	"log"
 	"os"
+
 	"github.com/joho/godotenv"
 )
 
@@ -104,16 +107,28 @@ func main() {
 	logPipe.Run()
 	defer logPipe.Stop()
 
+	producePipe, err := kafka.ProducePipeline(kafka.ProduceUnitConfig{
+		Brokers: []string{os.Getenv("KAFKA_BROKER")},
+		Id: os.Getenv("KAFKA_BROKER_ID"),
+		Pw: os.Getenv("KAFKA_BROKER_PW"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	producePipe.Run()
+	defer producePipe.Stop()
+
 	upbitConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_UPBIT)
 	upbitConvPipe.Run()
 	defer upbitConvPipe.Stop()
-	pipeline.ConnectPipeline(upbitConvPipe, logPipe)
+	pipeline.ConnectPipeline(upbitConvPipe, producePipe)
 
 	bithumbConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_BITHUMB)
 	bithumbConvPipe.Run()
 	defer bithumbConvPipe.Stop()
-	pipeline.ConnectPipeline(bithumbConvPipe, logPipe)
+	pipeline.ConnectPipeline(bithumbConvPipe, producePipe)
 
+	pipeline.ConnectPipeline(producePipe, logPipe)
 	pipeline.MetricPipeline(logPipe, nullPipe, time.Second)
 
 	for {

@@ -76,16 +76,19 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 		var plData PlData
 		plData.CheckPoints = []PlDataCheckpoint{
 			{
-				name: "recv",
-				ts: data.ReceiveTimestamp,
+				Name: "recv",
+				Ts: data.ReceiveTimestamp,
+				Err: nil,
 			},
 			{
-				name: "main",
-				ts: data.Timestamp,
+				Name: "main",
+				Ts: data.Timestamp,
+				Err: nil,
 			},
 			{
-				name: "conv",
-				ts: time.Now(),
+				Name: "conv",
+				Ts: time.Now(),
+				Err: nil,
 			},
 		}
 		plData.Exchange = exch
@@ -153,17 +156,17 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 
 func LogPipeline(mode bool) *Pipeline[*PlData, *PlData] {
 	return NewPipeline(1000, func(data *PlData) *PlData {
-		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{name: "log", ts: time.Now()})
+		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{Name: "log", Ts: time.Now(), Err: nil})
 		var exch string
 		var dt string
 		checkpoints := ""
 		for i, cp := range data.CheckPoints {
-			checkpoints += fmt.Sprintf("%s >> ", cp.name)
+			checkpoints += fmt.Sprintf("%s >> ", cp.Name)
 			if i != len(data.CheckPoints) -1 {
-				checkpoints += fmt.Sprintf("(+%f) >> ", data.CheckPoints[i+1].ts.Sub(cp.ts).Seconds())
+				checkpoints += fmt.Sprintf("(+%f) >> ", data.CheckPoints[i+1].Ts.Sub(cp.Ts).Seconds())
 			}
 		}
-		checkpoints += fmt.Sprintf("[ACC +%f]", data.CheckPoints[len(data.CheckPoints)-1].ts.Sub(data.CheckPoints[0].ts).Seconds())
+		checkpoints += fmt.Sprintf("[ACC +%f]", data.CheckPoints[len(data.CheckPoints)-1].Ts.Sub(data.CheckPoints[0].Ts).Seconds())
 		if data.Exchange == PL_EXCH_UPBIT {
 			exch = "UPBIT"
 		} else if data.Exchange == PL_EXCH_BITHUMB {

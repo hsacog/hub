@@ -29,6 +29,27 @@ func ConnectPipeline[T, R, S any](from *Pipeline[T, R], to *Pipeline[R, S]) {
 		}
 	}()
 }
+func MetricPipeline[T, R, S any](from *Pipeline[T, R], to *Pipeline[R, S], dur time.Duration) {
+	ticker := time.NewTicker(dur)	
+	var cnt int64 = 0
+	go func() {
+		defer close(to.In())
+		for {
+			select {
+			case v, ok := <-from.Out():
+				if !ok {
+					break
+				} else {
+					to.In() <- v
+					cnt += 1
+				}
+			case t := <-ticker.C:
+				log.Printf("[METRIC] DUR(%s) TIME(%s) THROUGHPUT: %d\n", dur.String(), t.String(), cnt)
+				cnt = 0	
+			}
+		}
+	}()
+}
 
 func (p *Pipeline[T, R]) In() chan<- T { return p.in }
 func (p *Pipeline[T, R]) Out() <-chan R { return p.out }
@@ -130,8 +151,8 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 	})	
 }
 
-func LogPipeline() *Pipeline[*PlData, struct{}] {
-	return NewPipeline(1000, func (data *PlData) struct {} {
+func LogPipeline(mode bool) *Pipeline[*PlData, *PlData] {
+	return NewPipeline(1000, func(data *PlData) *PlData {
 		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{name: "log", ts: time.Now()})
 		var exch string
 		var dt string
@@ -151,21 +172,35 @@ func LogPipeline() *Pipeline[*PlData, struct{}] {
 		if data.DataType == PL_DT_TICKER {
 			dt = "TICKER"
 			payload := data.Payload.(PlDataTicker)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			if mode {
+				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			}
 		} else if data.DataType == PL_DT_TRADE {
 			dt = "TRADE"
 			payload := data.Payload.(PlDataTrade)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			if mode {
+				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			}
 		} else if data.DataType == PL_DT_ORDERBOOK {
 			dt = "ORDERBOOK"
 			payload := data.Payload.(PlDataOrderbook)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			if mode {
+				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			}
 		} else if data.DataType == PL_DT_CANDLE {
 			dt = "CANDLE"
 			payload := data.Payload.(PlDataCandle)
-			log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			if mode {
+				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			}
 		}
-		return struct{}{}
+		return data
 	})
+}
+
+func NullPipeline() *Pipeline[*PlData, struct{}] {
+	return NewPipeline(0, func(data *PlData) struct{} {
+		return struct{}{}
+	})	
 }
 

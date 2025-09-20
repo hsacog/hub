@@ -5,13 +5,12 @@ import (
 	"hub/pkg/command"
 	"hub/pkg/command/api"
 	"net/url"
-
-	// "hub/pkg/interface/bithumb"
+	"time"
 	"hub/pkg/interface/upbit"
 	"hub/pkg/pipeline"
+	// "hub/pkg/pipeline/calc"
 	"log"
 	"os"
-
 	"github.com/joho/godotenv"
 )
 
@@ -97,7 +96,11 @@ func main() {
 	bif.Run()
 
 	// pipelines
-	logPipe := pipeline.LogPipeline()
+	nullPipe := pipeline.NullPipeline()
+	nullPipe.Run()
+	defer nullPipe.Stop()
+
+	logPipe := pipeline.LogPipeline(false)
 	logPipe.Run()
 	defer logPipe.Stop()
 
@@ -110,6 +113,8 @@ func main() {
 	bithumbConvPipe.Run()
 	defer bithumbConvPipe.Stop()
 	pipeline.ConnectPipeline(bithumbConvPipe, logPipe)
+
+	pipeline.MetricPipeline(logPipe, nullPipe, time.Second)
 
 	for {
 		select {

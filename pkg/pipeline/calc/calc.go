@@ -16,7 +16,7 @@ func StatePipeline(exch ...PlExchange) *Pipeline[*PlData, PlState] {
 	return NewPipeline(0, func (data *PlData) PlState {
 		if data.DataType == PL_DT_TICKER {
 			code := data.Payload.(PlDataTicker).Code
-			price := data.Payload.(PlDataTicker).CurrentPrice
+			price := data.Payload.(PlDataTicker).TradePrice
 			state[data.Exchange][code] = price
 		}
 		return state.Copy()

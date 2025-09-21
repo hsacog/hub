@@ -68,7 +68,7 @@ var TopicMap = map[Topic]string{
 	TICKER_BASIC: "ticker-basic",
 	TICKER_EXTENDED: "ticker-extended",
 	ORDERBOOK_5: "orderbook-5",
-	CANDLE_1S: "candel_1s",
+	CANDLE_1S: "candel-1s",
 }
 
 func GetPartition(c string) int32 {
@@ -98,12 +98,10 @@ func GetPartition(c string) int32 {
 
 func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], error) {
 	cf := sarama.NewConfig()
-	// cf.Producer.RequiredAcks = sarama.WaitForAll
-	cf.Producer.Retry.Max = 5
-	// cf.Net.SASL.Enable = true
-	// cf.Net.SASL.User = config.Id
-	// cf.Net.SASL.Password = config.Pw
-	// cf.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+	cf.Producer.RequiredAcks = sarama.NoResponse
+	cf.Producer.Compression = sarama.CompressionSnappy
+	cf.Producer.Flush.Frequency = 1 * time.Millisecond
+	cf.Producer.Partitioner = sarama.NewManualPartitioner
 
 	log.Println("start creating producer", config)
 	producer, err := sarama.NewAsyncProducer(config.Brokers, cf)
@@ -111,6 +109,12 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 		return nil, err
 	}
 	log.Println("end creating producer")
+
+	go func() {
+		for err := range producer.Errors() {
+			log.Println("Produce kafka msg error:", err)
+		}
+	}()
 	
 	return NewPipeline(1000, func (data *PlData) *PlData {
 		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{Name: "pd", Ts: time.Now(), Err: nil})
@@ -136,9 +140,10 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 				goto RETURN
 			}
 			pm = &sarama.ProducerMessage{Topic: TopicMap[TICKER_BASIC], Value: value, Partition: GetPartition(payload.Code.C2)}
+			/* partition, offset, err := producer.SendMessage(pm)
+			log.Println(partition, offset, err) */
 			producer.Input() <- pm
-			log.Println("sent message")
-			
+
 			msg, err = json.Marshal(Topic4 {
 				Code: []string{payload.Code.C1, payload.Code.C2},
 				Exchange: PlExchangeMap[data.Exchange],
@@ -153,8 +158,10 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 				goto RETURN
 			}
 			pm = &sarama.ProducerMessage{Topic: TopicMap[TICKER_EXTENDED], Value: value, Partition: GetPartition(payload.Code.C2)}
+			// partition, offset, err = producer.SendMessage(pm)
+			// log.Println(partition, offset, err)
 			producer.Input() <- pm
-			log.Println("sent message")
+
 		} else if data.DataType == PL_DT_ORDERBOOK {
 			payload := data.Payload.(PlDataOrderbook)
 			msg, err = json.Marshal(Topic3 {
@@ -163,6 +170,7 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 				TotalAskSize: payload.TotalAskSize,
 				TotalBidSize: payload.TotalBidSize,
 				OrderbookUnits: payload.OrderbookUnits,
+				Timestamp: payload.Timestamp,
 			})
 			if err != nil {
 				goto RETURN
@@ -171,8 +179,9 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 				goto RETURN
 			}
 			pm = &sarama.ProducerMessage{Topic: TopicMap[ORDERBOOK_5], Value: value, Partition: GetPartition(payload.Code.C2)}
+			// partition, offset, err := producer.SendMessage(pm)
+			// log.Println(partition, offset, err)
 			producer.Input() <- pm
-			log.Println("sent message")
 
 		} else if data.DataType == PL_DT_CANDLE {
 			payload := data.Payload.(PlDataCandle)
@@ -196,8 +205,9 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 				goto RETURN
 			}
 			pm = &sarama.ProducerMessage{Topic: TopicMap[CANDLE_1S], Value: value, Partition: GetPartition(payload.Code.C2)}
+			// partition, offset, err := producer.SendMessage(pm)
+			// log.Println(partition, offset, err)
 			producer.Input() <- pm
-			log.Println("sent message")
 		}
 RETURN:
 		return data	

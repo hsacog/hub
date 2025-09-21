@@ -109,8 +109,6 @@ func main() {
 
 	producePipe, err := kafka.ProducePipeline(kafka.ProduceUnitConfig{
 		Brokers: []string{os.Getenv("KAFKA_BROKER")},
-		Id: os.Getenv("KAFKA_BROKER_ID"),
-		Pw: os.Getenv("KAFKA_BROKER_PW"),
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -45,6 +45,7 @@ type UpbitIFUnit struct {
 	ctx *context.Context
 	cancel *context.CancelFunc
 	state UpbitIFUnitState
+	seq int64
 	lk sync.RWMutex
 }
 
@@ -65,6 +66,7 @@ UPBIT IF CONTROL
 type IFControl struct {
 	Type IFControlType
 	Payload any
+	Seq int64
 	Timestamp time.Time
 }
 

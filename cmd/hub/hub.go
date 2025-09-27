@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"hub/pkg/command"
 	"hub/pkg/command/api"
 	"hub/pkg/interface/upbit"
 	"hub/pkg/pipeline"
 	"hub/pkg/pipeline/kafka"
+	"io"
 	"net/url"
 	"time"
 
@@ -18,11 +18,21 @@ import (
 )
 
 func main() {
-	fmt.Println("STARTING IF")
+	// configure logger
+	file, err := os.OpenFile("app.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	mw := io.MultiWriter(os.Stdout, file)
+	log.SetOutput(mw)
+
+	log.Println("STARTING IF")
 	log.SetFlags(log.LstdFlags|log.Lshortfile|log.Lmicroseconds)
 	if err := godotenv.Load(); err != nil {
 		log.Fatal("Error loading .env file")
 	}
+
 	// configure command receiver
 	cmd_ch := make(chan command.Command)
 	cr := api.NewRestApiRunner(cmd_ch)
@@ -119,14 +129,14 @@ func main() {
 	upbitConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_UPBIT)
 	upbitConvPipe.Run()
 	defer upbitConvPipe.Stop()
-	pipeline.ConnectPipeline(upbitConvPipe, producePipe)
+	pipeline.ConnectPipeline(upbitConvPipe, logPipe)
 
 	bithumbConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_BITHUMB)
 	bithumbConvPipe.Run()
 	defer bithumbConvPipe.Stop()
-	pipeline.ConnectPipeline(bithumbConvPipe, producePipe)
+	pipeline.ConnectPipeline(bithumbConvPipe, logPipe)
 
-	pipeline.ConnectPipeline(producePipe, logPipe)
+	// pipeline.ConnectPipeline(producePipe, logPipe)
 	pipeline.MetricPipeline(logPipe, nullPipe, time.Second)
 
 	for {

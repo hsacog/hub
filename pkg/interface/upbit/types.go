@@ -45,6 +45,7 @@ type UpbitIFUnit struct {
 	ctx *context.Context
 	cancel *context.CancelFunc
 	state UpbitIFUnitState
+	resetCnt int64
 	seq int64
 	lk sync.RWMutex
 }

@@ -98,7 +98,7 @@ func (uif *UpbitIF) _stop(unit *UpbitIFUnit) error {
 	(*unit.cancel)()
 	// graceful shutdown
 	// Send a WebSocket close message
-    /* deadline := time.Now().Add(time.Minute)  
+    deadline := time.Now().Add(time.Minute)  
     err = unit.conn.WriteControl(  
         websocket.CloseMessage,  
         websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),  
@@ -121,8 +121,7 @@ func (uif *UpbitIF) _stop(unit *UpbitIFUnit) error {
         if err != nil {  
             break  
         }  
-    }   */
-    // Close the TCP connection
+    }
     err = unit.conn.Close()  
     if err != nil {  
         return err  
@@ -131,9 +130,9 @@ func (uif *UpbitIF) _stop(unit *UpbitIFUnit) error {
 }
 func (uif *UpbitIF) _reset(unit *UpbitIFUnit) error {
 	unit.resetCnt += 1;
-	if unit.resetCnt >= 5 {
+	/* if unit.resetCnt >= 10 {
 		return errors.New("reset count exceeded")
-	}
+	} */
 	new_ctx, new_cancel := context.WithCancel(context.Background())
 	unit.ctx = &new_ctx	
 	unit.cancel = &new_cancel
@@ -167,7 +166,13 @@ func (uif *UpbitIF) _run_ws_ping(delay time.Duration, unit *UpbitIFUnit, seq int
 		for {
 			select {
 			case <- ticker.C:
-				unit.ctl <- IFControl{Type: UPBIT_IF_PING, Timestamp: time.Now(), Seq: seq}
+				unit.ctl <- IFControl{
+					Seq: seq,
+					Txn: []IFControlMsg{
+						{Type: UPBIT_IF_PING},
+					},
+					Timestamp: time.Now(),
+				}
 			case <- (*unit.ctx).Done():
 				log.Println("stop ping")
 				return
@@ -183,14 +188,26 @@ func (uif *UpbitIF) _run_ws_reader(unit *UpbitIFUnit, seq int64) {
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 					log.Println("wss connection closed normally:", err)
+				} else {
+					log.Println("wss connection closed with error: ", err)
 				}
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseAbnormalClosure) {
-					log.Println("wss connection closed abnormally:", err)
+				unit.ctl <- IFControl{
+					Seq: unit.seq,
+					Txn: []IFControlMsg{
+						{Type: UPBIT_IF_STOP},
+						{Type: UPBIT_IF_RESET},
+					},
+					Timestamp: time.Now(),
 				}
-				unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now(), Seq: seq}
 				return
 			} else {
-				unit.ctl <- IFControl{Type: UPBIT_IF_READ, Payload: &data, Timestamp: time.Now(), Seq: seq}
+				unit.ctl <- IFControl{
+					Seq: seq,
+					Txn: []IFControlMsg{
+						{Type: UPBIT_IF_READ, Payload: &data},
+					},
+					Timestamp: time.Now(),
+				}
 			}
 		}
 	}()
@@ -200,94 +217,97 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit, seq int64) {
 	go func() {
 		for {
 			select {
-			case msg := <- unit.ctl:
-				if msg.Seq != seq {
-					log.Printf("SKIP MSG_SEQ(%d) CUR_IF_SEQ(%d)", msg.Seq, seq)
+			case ifc := <- unit.ctl:
+				if ifc.Seq != seq {
+					log.Printf("SKIP TXN_SEQ(%d) CUR_IF_SEQ(%d)", ifc.Seq, seq)
 					continue
 				}
-				// log.Println("processing start")
-				switch msg.Type {
-				case UPBIT_IF_PING:
-					unit.lk.RLock()
-					// log.Println("RLOCK(unit.lk)")
-					if unit.state == READY {
-						log.Println("send ping message")
-						if err := (*unit.conn).WriteMessage(websocket.PingMessage, nil); err != nil {
-							log.Println("ping error: ", err)
-							// unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now()}
-						}	
-					}
-					unit.lk.RUnlock()
-					// log.Println("RUNLOCK(unit.lk)")
-				case UPBIT_IF_WRITE:
-					unit.lk.RLock()
-					// log.Println("RLOCK(unit.lk)")
-					data := msg.Payload.(*[]byte)
-					if unit.state == READY {
-						if err := (*unit.conn).WriteMessage(websocket.TextMessage, *data); err != nil {
-							log.Fatal("write error: ", err)
-							unit.ctl <- IFControl{Type: UPBIT_IF_STOP, Timestamp: time.Now(), Seq: unit.seq}
+				for _, msg := range ifc.Txn {
+					// log.Println("processing start")
+					switch msg.Type {
+					case UPBIT_IF_PING:
+						unit.lk.RLock()
+						// log.Println("RLOCK(unit.lk)")
+						if unit.state == READY {
+							log.Println("send ping message")
+							if err := (*unit.conn).WriteMessage(websocket.PingMessage, nil); err != nil {
+								log.Println("ping error: ", err)
+							}	
 						}
-					}
-					unit.lk.RUnlock()
-					// log.Println("RUNLOCK(unit.lk)")
-				case UPBIT_IF_READ:
-					data := msg.Payload.(*[]byte)
-					var header UpbitHeader
-					var err error
-					var plType UpbitDT
-					if err = json.Unmarshal(*data, &header); err != nil || header.Type == "" {
-						plType = UPBIT_ERROR
-					} else {
-						switch {
-						case header.Type == "ticker":
-							plType = UPBIT_TICKER
-						case header.Type == "trade":
-							plType = UPBIT_TRADE
-						case header.Type == "orderbook":
-							plType = UPBIT_ORDERBOOK
-						case strings.HasPrefix(header.Type, "candle"):
-							plType = UPBIT_CANDLE
+						unit.lk.RUnlock()
+						// log.Println("RUNLOCK(unit.lk)")
+					case UPBIT_IF_WRITE:
+						unit.lk.RLock()
+						// log.Println("RLOCK(unit.lk)")
+						data := msg.Payload.(*[]byte)
+						if unit.state == READY {
+							if err := (*unit.conn).WriteMessage(websocket.TextMessage, *data); err != nil {
+								log.Fatal("write error: ", err)
+								unit.ctl <- IFControl{
+									Seq: unit.seq,
+									Txn: []IFControlMsg{
+										{Type: UPBIT_IF_STOP},
+										{Type: UPBIT_IF_RESET},
+									},
+									Timestamp: time.Now(),
+								}
+							}
 						}
-					}
-					uif.pl <- UpbitRawData{Type: plType, ReceiveTimestamp: msg.Timestamp, Timestamp: time.Now(), Bytes: data}
-				case UPBIT_IF_RESET:
-					unit.lk.Lock()
-					// log.Println("LOCK(unit.lk)")
-					if unit.state != STOP {
-						log.Println("Error: reset not in stop state")
-					} else {
-						log.Println("IF reset")
-						if err := uif._reset(unit); err != nil {
-							log.Fatal("_reset error: ", err)
+						unit.lk.RUnlock()
+						// log.Println("RUNLOCK(unit.lk)")
+					case UPBIT_IF_READ:
+						data := msg.Payload.(*[]byte)
+						var header UpbitHeader
+						var err error
+						var plType UpbitDT
+						if err = json.Unmarshal(*data, &header); err != nil || header.Type == "" {
+							plType = UPBIT_ERROR
+						} else {
+							switch {
+							case header.Type == "ticker":
+								plType = UPBIT_TICKER
+							case header.Type == "trade":
+								plType = UPBIT_TRADE
+							case header.Type == "orderbook":
+								plType = UPBIT_ORDERBOOK
+							case strings.HasPrefix(header.Type, "candle"):
+								plType = UPBIT_CANDLE
+							}
 						}
-						unit.state = READY
-					}
-					unit.lk.Unlock()
-					// log.Println("UNLOCK(unit.lk)")
-					return // stop main (_reset starts new main)
-				case UPBIT_IF_STOP:
-					unit.lk.Lock()
-					// log.Println("LOCK(unit.lk)")
-					if unit.state != READY {
-						log.Fatal("Error: stop not in ready state")
-					} else {
-						unit.state = STOP
-						log.Println("IF stop")
-						if err := uif._stop(unit); err != nil {
-							log.Println("_stop error: ", err)
+						uif.pl <- UpbitRawData{Type: plType, ReceiveTimestamp: ifc.Timestamp, Timestamp: time.Now(), Bytes: data}
+					case UPBIT_IF_RESET:
+						unit.lk.Lock()
+						log.Println("UPBIT_IF_RESET LOCK(unit.lk)")
+						if unit.state != STOP {
+							log.Println("Error: reset not in stop state")
+						} else {
+							log.Println("IF reset")
+							if err := uif._reset(unit); err != nil {
+								log.Fatal("_reset error: ", err)
+							}
+							unit.state = READY
 						}
-						log.Println("IF reset")
-						if err := uif._reset(unit); err != nil {
-							log.Fatal("_reset errors", err)
+						unit.lk.Unlock()
+						log.Println("UPBIT_IF_RESET UNLOCK(unit.lk)")
+						return // stop main (_reset starts new main)
+					case UPBIT_IF_STOP:
+						unit.lk.Lock()
+						log.Println("UPBIT_IF_STOP LOCK(unit.lk)")
+						if unit.state != READY {
+							log.Fatal("Error: stop not in ready state")
+						} else {
+							unit.state = STOP
+							log.Println("IF stop")
+							if err := uif._stop(unit); err != nil {
+								log.Println("_stop error: ", err)
+							}
 						}
-						unit.state = READY
+						unit.lk.Unlock()
+						log.Println("UPBIT_IF_STOP UNLOCK(unit.lk)")
 					}
-					unit.lk.Unlock()
-					// log.Println("UNLOCK(unit.lk)")
-					return // stop main (_reset starts new main)
-				}
 				// log.Println("processing end")
+
+				}
 			}
 		}	
 	}()
@@ -296,11 +316,17 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit, seq int64) {
 
 func (uif *UpbitIF) Run() {
 	uif._run_ws_main(&uif.quoUnit, 0)
-	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_RESET, Timestamp: time.Now(), Seq: 0}
+	uif.quoUnit.ctl <- IFControl{
+		Seq: 0,
+		Txn: []IFControlMsg{
+			{Type: UPBIT_IF_RESET},
+		},
+		Timestamp: time.Now(),
+	}
 }
 
 func (uif *UpbitIF) _subscribe(codes []string) error {
-	log.Println("_subscribe", codes)
+	log.Println("_subscribe"/* , codes */)
 	msg := []any{}
 	msg = append(msg,
 		Ticket {
@@ -344,7 +370,13 @@ func (uif *UpbitIF) _subscribe(codes []string) error {
 	}
 	// uif.quoUnit.lk.RLock()
 	//log.Println("RLOCK(unit.quoUnit.lk)")
-	uif.quoUnit.ctl <- IFControl{Type: UPBIT_IF_WRITE, Payload: &b, Timestamp: time.Now(), Seq: uif.quoUnit.seq}
+	uif.quoUnit.ctl <- IFControl{
+		Seq: uif.quoUnit.seq,
+		Txn: []IFControlMsg{
+			{Type: UPBIT_IF_WRITE, Payload: &b},
+		},
+		Timestamp: time.Now(),
+	}
 	// uif.quoUnit.lk.RUnlock()
 	//log.Println("RUNLOCK(unit.quoUnit.lk)")
 	return nil
@@ -352,6 +384,7 @@ func (uif *UpbitIF) _subscribe(codes []string) error {
 
 func (uif *UpbitIF) Subscribe(ps []command.MktPair) error {
 	uif.lk.Lock()
+	uif.quoUnit.lk.RLock()
 	// log.Println("LOCK(uif.lk)")
 	for _, p := range ps {
 		cand1 := p.C1 + "-" + p.C2
@@ -373,12 +406,14 @@ func (uif *UpbitIF) Subscribe(ps []command.MktPair) error {
 	}
 	
 	uif._subscribe(currentCodes)
+	uif.quoUnit.lk.RUnlock()
 	uif.lk.Unlock()
 	// log.Println("UNLOCK(uif.lk)")
 	return nil
 }
 func (uif *UpbitIF) UnSubscribe(ps []command.MktPair) error {
 	uif.lk.Lock()
+	uif.quoUnit.lk.RLock()
 	// log.Println("LOCK(uif.lk)")
 	for _, p := range ps {
 		cand1 := p.C1 + "-" + p.C2
@@ -400,6 +435,7 @@ func (uif *UpbitIF) UnSubscribe(ps []command.MktPair) error {
 		currentCodes = append(currentCodes, k)
 	}
 	uif._subscribe(currentCodes)
+	uif.quoUnit.lk.RUnlock()
 	uif.lk.Unlock()
 	// log.Println("UNLOCK(uif.lk)")
 	return nil

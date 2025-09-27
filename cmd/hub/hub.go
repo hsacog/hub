@@ -144,7 +144,7 @@ func main() {
 		case com := <-cmd_ch:
 			switch com.Type {
 			case command.ADD_MKT:
-				log.Println("subscribe", com.Payload)
+				// log.Println("subscribe", com.Payload)
 				var mktPairs []command.MktPair
 				for _, p := range com.Payload {
 					mktPairs = append(mktPairs, p.(command.MktPair))
@@ -152,7 +152,7 @@ func main() {
 				uif.Subscribe(mktPairs)
 				bif.Subscribe(mktPairs)
 			case command.REMOVE_MKT:
-				log.Println("unsubscribe", com.Payload)
+				// log.Println("unsubscribe", com.Payload)
 				var mktPairs []command.MktPair
 				for _, p := range com.Payload {
 					mktPairs = append(mktPairs, p.(command.MktPair))

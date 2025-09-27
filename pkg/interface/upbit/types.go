@@ -65,10 +65,13 @@ UPBIT IF CONTROL
 */
 
 type IFControl struct {
-	Type IFControlType
-	Payload any
+	Txn []IFControlMsg
 	Seq int64
 	Timestamp time.Time
+}
+type IFControlMsg struct {
+	Type IFControlType
+	Payload any
 }
 
 type IFControlType uint8

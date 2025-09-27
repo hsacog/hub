@@ -147,6 +147,7 @@ func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
 		case upbit.UPBIT_ERROR:
 			var d upbit.UpbitError
 			json.Unmarshal(*data.Bytes, &d)
+			log.Println("UPBIT_ERROR: ", d)
 			plData.DataType = PL_DT_ERROR
 			plData.Payload = struct{}{}
 		}

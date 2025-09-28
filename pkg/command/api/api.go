@@ -2,6 +2,7 @@ package api
 
 import (
 	"hub/pkg/command"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -15,12 +16,14 @@ type RestApiRunner struct {
 func NewRestApiRunner(ch chan command.Command) command.CommandReceiver {
 	router := gin.Default()
 	api := router.Group("/api/v1")
-	mkt := api.Group("/mkt")
-
 	handler := &Handler{ch}
 
-	mkt.POST("", handler.MktAdd)
-	mkt.DELETE("", handler.MktRemove)
+	ctl := api.Group("/ctl")
+	ctl.POST("", handler.Control)
+	
+	sub := api.Group("/sub")
+	sub.POST("", handler.Subscribe)
+	sub.DELETE("", handler.UnSubscribe)
 
 	return &RestApiRunner{ch, router}
 }
@@ -40,8 +43,29 @@ type Handler struct {
 	ch chan command.Command
 }
 
-func (handler *Handler) MktAdd(ctx *gin.Context) {
-	var data Mkt
+func (handler *Handler) Control(ctx *gin.Context) {
+	var data Ctl 	
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		response := Response{
+			Success: false,
+			Message: "invalid json" + err.Error(),
+		}
+		ctx.JSON(http.StatusBadRequest, response)
+		return
+	}
+	ctx.JSON(http.StatusOK, Response{
+		Success: true,
+	})
+	log.Println("command", data)
+	if data.Cmd == "RESET" {
+		handler.ch <- command.Command{
+			Type: command.RESET,
+		}
+	}		
+}
+
+func (handler *Handler) Subscribe(ctx *gin.Context) {
+	var data Sub
 	if err := ctx.ShouldBindJSON(&data); err != nil {
 		response := Response{
 			Success: false,
@@ -63,8 +87,8 @@ func (handler *Handler) MktAdd(ctx *gin.Context) {
 		Payload: payload,
 	}
 }
-func (handler *Handler) MktRemove(ctx *gin.Context) {
-	var data Mkt
+func (handler *Handler) UnSubscribe(ctx *gin.Context) {
+	var data Sub
 	if err := ctx.ShouldBindJSON(&data); err != nil {
 		response := Response{
 			Success: false,

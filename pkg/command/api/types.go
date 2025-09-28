@@ -6,7 +6,11 @@ type Response struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-type Mkt struct {
+type Ctl struct {
+	Cmd string `json:"cmd"`
+}
+
+type Sub struct {
 	Pairs []MktPair `json:"pairs"`
 }
 type MktPair struct {

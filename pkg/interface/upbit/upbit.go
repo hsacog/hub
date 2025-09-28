@@ -68,8 +68,6 @@ func (uif *UpbitIF) _open(unit *UpbitIFUnit) error {
 			log.Println(res)
 			return err
 		}
-		// Avoid blocking of closed connection
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		unit.conn = conn
 	}
 
@@ -94,25 +92,30 @@ func (uif *UpbitIF) _open(unit *UpbitIFUnit) error {
 	return nil
 }
 func (uif *UpbitIF) _stop(unit *UpbitIFUnit) error {
+	if unit.state != READY {
+		log.Println("[_stop] not in READY state")
+		return errors.New("[_stop] not in READY state")
+	}
+	log.Println("[_stop] IF stop")
+	unit.state = STOP
+	
 	var err error
 	(*unit.cancel)()
 	// graceful shutdown
 	// Send a WebSocket close message
-    deadline := time.Now().Add(time.Minute)  
     err = unit.conn.WriteControl(  
         websocket.CloseMessage,  
         websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),  
-        deadline,  
+        time.Now().Add(time.Minute),  
     )  
     if err != nil {  
         return err  
     }  
 
-    err = unit.conn.SetReadDeadline(time.Now().Add(5 * time.Second))  
+    err = (*unit.conn).SetReadDeadline(time.Now().Add(5 * time.Second))  
     if err != nil {  
         return err  
     }  
-
     for {  
         _, _, err = unit.conn.NextReader()  
         if websocket.IsCloseError(err, websocket.CloseNormalClosure) {  
@@ -122,6 +125,8 @@ func (uif *UpbitIF) _stop(unit *UpbitIFUnit) error {
             break  
         }  
     }
+
+	err = (*unit.conn).SetWriteDeadline(time.Now().Add(5 * time.Second))
     err = unit.conn.Close()  
     if err != nil {  
         return err  
@@ -129,6 +134,11 @@ func (uif *UpbitIF) _stop(unit *UpbitIFUnit) error {
 	return nil
 }
 func (uif *UpbitIF) _reset(unit *UpbitIFUnit) error {
+	if unit.state != STOP {
+		log.Println("[_reset] not in STOP state")
+		return errors.New("[_reset] not in STOP state")
+	}
+	log.Println("[_reset] IF reset")
 	unit.resetCnt += 1;
 	/* if unit.resetCnt >= 10 {
 		return errors.New("reset count exceeded")
@@ -152,13 +162,137 @@ func (uif *UpbitIF) _reset(unit *UpbitIFUnit) error {
 		currentCodes = append(currentCodes, k)
 	}
 	if len(currentCodes) != 0 {
-		log.Println("re-subscribe:", currentCodes)
+		log.Println("re-subscribe after 5s: ", currentCodes)
 		timer := time.After(5 * time.Second)
 		<- timer
 		uif._subscribe(currentCodes)
 	}
+	unit.state = READY
 	return nil
 }
+
+func (uif *UpbitIF) _ping(unit *UpbitIFUnit) error {
+	if unit.state != READY {
+		log.Println("[_ping] not in READY state")
+		return errors.New("[_ping] not in READY state")
+	}
+	log.Println("[_ping] send ping")
+	(*unit.conn).SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := (*unit.conn).WriteMessage(websocket.PingMessage, nil); err != nil {
+		log.Println("[_ping] ping failed: ", err)
+		unit.ctl <- IFControl{
+			Seq: unit.seq,
+			Txn: []IFControlMsg{
+				{Type: UPBIT_IF_STOP},
+				{Type: UPBIT_IF_RESET},
+			},
+			Timestamp: time.Now(),
+		}
+	}	
+	return nil
+}
+
+func (uif *UpbitIF) _write(unit *UpbitIFUnit, data *[]byte) error {
+	if unit.state != READY {
+		log.Println("[_write] not in READY state")
+		return errors.New("[_write] not in READY state")
+	}
+	(*unit.conn).SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := (*unit.conn).WriteMessage(websocket.TextMessage, *data); err != nil {
+		log.Println("[_write] write failed: ", err)
+		unit.ctl <- IFControl{
+			Seq: unit.seq,
+			Txn: []IFControlMsg{
+				{Type: UPBIT_IF_STOP},
+				{Type: UPBIT_IF_RESET},
+			},
+			Timestamp: time.Now(),
+		}
+		return err
+	}
+	return nil
+}
+
+func (uif *UpbitIF) _read(unit *UpbitIFUnit, data *[]byte, rdt time.Time) error {
+	var header UpbitHeader
+	var err error
+	var plType UpbitDT
+	if err = json.Unmarshal(*data, &header); err != nil || header.Type == "" {
+		plType = UPBIT_ERROR
+	} else {
+		switch {
+		case header.Type == "ticker":
+			plType = UPBIT_TICKER
+		case header.Type == "trade":
+			plType = UPBIT_TRADE
+		case header.Type == "orderbook":
+			plType = UPBIT_ORDERBOOK
+		case strings.HasPrefix(header.Type, "candle"):
+			plType = UPBIT_CANDLE
+		}
+	}
+	uif.pl <- UpbitRawData{Type: plType, ReceiveTimestamp: rdt, Timestamp: time.Now(), Bytes: data}
+	return nil
+}
+
+func (uif *UpbitIF) _subscribe(codes []string) error {
+	log.Println("_subscribe"/* , codes */)
+	msg := []any{}
+	msg = append(msg,
+		Ticket {
+			Ticket: uuid.New().String(),
+		},
+	)
+	for _, opt := range uif.config.Options {
+		dataType := DataType {
+			IsOnlySnapshot: opt.Option.IsOnlySnapshot,
+			IsOnlyRealtime: opt.Option.IsOnlyRealtime,
+		}
+		switch opt.Type {
+		case UPBIT_TICKER:
+			dataType.Type = "ticker"
+			dataType.Codes = codes
+		case UPBIT_TRADE:
+			dataType.Type = "trade"
+			dataType.Codes = codes
+		case UPBIT_ORDERBOOK:
+			var orderCodes []string
+			for _, code := range codes {
+				orderCodes = append(orderCodes, code + "." + strconv.FormatInt(opt.Option.OrderbookUnitSize, 10))
+			}
+			dataType.Type = "orderbook"
+			dataType.Codes = orderCodes
+		case UPBIT_CANDLE:
+			dataType.Type = "candle" + "." + opt.Option.CandleInterval
+			dataType.Codes = codes
+		}
+		msg = append(msg, dataType)
+	}
+	msg = append(msg, 
+		Format {
+			Format: "DEFAULT",
+		},
+	)
+
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return err;
+	}
+	// uif.quoUnit.lk.RLock()
+	//log.Println("RLOCK(unit.quoUnit.lk)")
+	uif.quoUnit.ctl <- IFControl{
+		Seq: uif.quoUnit.seq,
+		Txn: []IFControlMsg{
+			{Type: UPBIT_IF_WRITE, Payload: &b},
+		},
+		Timestamp: time.Now(),
+	}
+	// uif.quoUnit.lk.RUnlock()
+	//log.Println("RUNLOCK(unit.quoUnit.lk)")
+	return nil
+} 
+
+
 
 func (uif *UpbitIF) _run_ws_ping(delay time.Duration, unit *UpbitIFUnit, seq int64) {
 	ticker := time.NewTicker(delay)
@@ -223,90 +357,31 @@ func (uif *UpbitIF) _run_ws_main(unit *UpbitIFUnit, seq int64) {
 					continue
 				}
 				for _, msg := range ifc.Txn {
-					// log.Println("processing start")
 					switch msg.Type {
 					case UPBIT_IF_PING:
 						unit.lk.RLock()
-						// log.Println("RLOCK(unit.lk)")
-						if unit.state == READY {
-							log.Println("send ping message")
-							if err := (*unit.conn).WriteMessage(websocket.PingMessage, nil); err != nil {
-								log.Println("ping error: ", err)
-							}	
-						}
+						uif._ping(unit)
 						unit.lk.RUnlock()
-						// log.Println("RUNLOCK(unit.lk)")
 					case UPBIT_IF_WRITE:
 						unit.lk.RLock()
-						// log.Println("RLOCK(unit.lk)")
-						data := msg.Payload.(*[]byte)
-						if unit.state == READY {
-							if err := (*unit.conn).WriteMessage(websocket.TextMessage, *data); err != nil {
-								log.Fatal("write error: ", err)
-								unit.ctl <- IFControl{
-									Seq: unit.seq,
-									Txn: []IFControlMsg{
-										{Type: UPBIT_IF_STOP},
-										{Type: UPBIT_IF_RESET},
-									},
-									Timestamp: time.Now(),
-								}
-							}
-						}
+						uif._write(unit, msg.Payload.(*[]byte))
 						unit.lk.RUnlock()
-						// log.Println("RUNLOCK(unit.lk)")
 					case UPBIT_IF_READ:
-						data := msg.Payload.(*[]byte)
-						var header UpbitHeader
-						var err error
-						var plType UpbitDT
-						if err = json.Unmarshal(*data, &header); err != nil || header.Type == "" {
-							plType = UPBIT_ERROR
-						} else {
-							switch {
-							case header.Type == "ticker":
-								plType = UPBIT_TICKER
-							case header.Type == "trade":
-								plType = UPBIT_TRADE
-							case header.Type == "orderbook":
-								plType = UPBIT_ORDERBOOK
-							case strings.HasPrefix(header.Type, "candle"):
-								plType = UPBIT_CANDLE
-							}
-						}
-						uif.pl <- UpbitRawData{Type: plType, ReceiveTimestamp: ifc.Timestamp, Timestamp: time.Now(), Bytes: data}
+						uif._read(unit, msg.Payload.(*[]byte), ifc.Timestamp)
 					case UPBIT_IF_RESET:
 						unit.lk.Lock()
-						log.Println("UPBIT_IF_RESET LOCK(unit.lk)")
-						if unit.state != STOP {
-							log.Println("Error: reset not in stop state")
-						} else {
-							log.Println("IF reset")
-							if err := uif._reset(unit); err != nil {
-								log.Fatal("_reset error: ", err)
-							}
-							unit.state = READY
+						if err := uif._reset(unit); err != nil {
+							log.Fatal("[_run_ws_main] error: ", err)
 						}
 						unit.lk.Unlock()
-						log.Println("UPBIT_IF_RESET UNLOCK(unit.lk)")
 						return // stop main (_reset starts new main)
 					case UPBIT_IF_STOP:
 						unit.lk.Lock()
-						log.Println("UPBIT_IF_STOP LOCK(unit.lk)")
-						if unit.state != READY {
-							log.Fatal("Error: stop not in ready state")
-						} else {
-							unit.state = STOP
-							log.Println("IF stop")
-							if err := uif._stop(unit); err != nil {
-								log.Println("_stop error: ", err)
-							}
+						if err := uif._stop(unit); err != nil {
+							log.Println("[_run_ws_main] error: ", err)
 						}
 						unit.lk.Unlock()
-						log.Println("UPBIT_IF_STOP UNLOCK(unit.lk)")
 					}
-				// log.Println("processing end")
-
 				}
 			}
 		}	
@@ -324,63 +399,19 @@ func (uif *UpbitIF) Run() {
 		Timestamp: time.Now(),
 	}
 }
-
-func (uif *UpbitIF) _subscribe(codes []string) error {
-	log.Println("_subscribe"/* , codes */)
-	msg := []any{}
-	msg = append(msg,
-		Ticket {
-			Ticket: uuid.New().String(),
-		},
-	)
-	for _, opt := range uif.config.Options {
-		dataType := DataType {
-			IsOnlySnapshot: opt.Option.IsOnlySnapshot,
-			IsOnlyRealtime: opt.Option.IsOnlyRealtime,
-		}
-		switch opt.Type {
-		case UPBIT_TICKER:
-			dataType.Type = "ticker"
-			dataType.Codes = codes
-		case UPBIT_TRADE:
-			dataType.Type = "trade"
-			dataType.Codes = codes
-		case UPBIT_ORDERBOOK:
-			var orderCodes []string
-			for _, code := range codes {
-				orderCodes = append(orderCodes, code + "." + strconv.FormatInt(opt.Option.OrderbookUnitSize, 10))
-			}
-			dataType.Type = "orderbook"
-			dataType.Codes = orderCodes
-		case UPBIT_CANDLE:
-			dataType.Type = "candle" + "." + opt.Option.CandleInterval
-			dataType.Codes = codes
-		}
-		msg = append(msg, dataType)
-	}
-	msg = append(msg, 
-		Format {
-			Format: "DEFAULT",
-		},
-	)
-
-	b, err := json.Marshal(msg)
-	if err != nil {
-		return err;
-	}
-	// uif.quoUnit.lk.RLock()
-	//log.Println("RLOCK(unit.quoUnit.lk)")
+func (uif *UpbitIF) Reset() error {
+	uif.quoUnit.lk.RLock()	
 	uif.quoUnit.ctl <- IFControl{
 		Seq: uif.quoUnit.seq,
 		Txn: []IFControlMsg{
-			{Type: UPBIT_IF_WRITE, Payload: &b},
+			{Type: UPBIT_IF_STOP},
+			{Type: UPBIT_IF_RESET},
 		},
 		Timestamp: time.Now(),
 	}
-	// uif.quoUnit.lk.RUnlock()
-	//log.Println("RUNLOCK(unit.quoUnit.lk)")
+	uif.quoUnit.lk.RUnlock()	
 	return nil
-} 
+}
 
 func (uif *UpbitIF) Subscribe(ps []command.MktPair) error {
 	uif.lk.Lock()

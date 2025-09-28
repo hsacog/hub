@@ -159,7 +159,10 @@ func main() {
 				}
 				uif.UnSubscribe(mktPairs)
 				bif.UnSubscribe(mktPairs)
-				
+			case command.RESET:
+				log.Println("[cmd] RESET")
+				uif.Reset()
+				bif.Reset()
 			}
 		case data := <-uch:
 			upbitConvPipe.In() <- &data

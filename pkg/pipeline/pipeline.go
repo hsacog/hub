@@ -1,210 +1,191 @@
 package pipeline
 
 import (
-	"encoding/json"
-	"fmt"
-	"hub/pkg/interface/upbit"
+	"errors"
+	"hub/pkg/pipeline/task"
+	"hub/pkg/pipeline/task/calc"
+	"hub/pkg/pipeline/task/kafka"
 	"log"
+	"os"
+
+	// "hub/pkg/pipeline/task/kafka"
 	"time"
 )
 
-type Pipeline[T any, R any] struct {
-	in     chan T
-	out    chan R
-	worker func(T) R
+type PlTaskType uint8
+const (
+	INPUT = iota
+	OUTPUT
+	INTERNAL
+)
+
+type Pipeline struct {
+	inTasks map[string]task.Tasker
+	outTasks map[string]task.Tasker
+	tasks map[string]task.Tasker
 }
 
-func NewPipeline[T any, R any](buf int, worker func(T) R) *Pipeline[T, R] {
-	return &Pipeline[T, R]{
-		in:     make(chan T, buf),
-		out:    make(chan R, buf),
-		worker: worker,
+type PlInPlug[T any] struct {
+	task *task.Task[T, T]
+}
+
+func NewPipeline() *Pipeline {
+	return &Pipeline{
+		inTasks: make(map[string]task.Tasker),
+		outTasks: make(map[string]task.Tasker),
+		tasks: make(map[string]task.Tasker),
 	}
 }
-func ConnectPipeline[T, R, S any](from *Pipeline[T, R], to *Pipeline[R, S]) {
-	go func() {
-		defer close(to.In())
-		for v := range from.Out() {
-			to.In() <- v
-		}
-	}()
-}
-func MetricPipeline[T, R, S any](from *Pipeline[T, R], to *Pipeline[R, S], dur time.Duration) {
-	ticker := time.NewTicker(dur)	
-	var cnt int64 = 0
-	go func() {
-		defer close(to.In())
-		for {
-			select {
-			case v, ok := <-from.Out():
-				if !ok {
-					break
-				} else {
-					to.In() <- v
-					cnt += 1
-				}
-			case t := <-ticker.C:
-				log.Printf("[METRIC] DUR(%s) TIME(%s) THROUGHPUT: %d\n", dur.String(), t.String(), cnt)
-				cnt = 0	
-			}
-		}
-	}()
+
+func(pl *Pipeline) Register(name string, task task.Tasker, taskType PlTaskType) {
+	pl.tasks[name] = task
+	if taskType == INPUT {
+		pl.inTasks[name] = task
+	} else if taskType == OUTPUT {
+		pl.outTasks[name] = task
+	}
 }
 
-func (p *Pipeline[T, R]) In() chan<- T { return p.in }
-func (p *Pipeline[T, R]) Out() <-chan R { return p.out }
+func PlRegister[T any, R any](pl *Pipeline, name string, t *task.Task[T, R], taskType PlTaskType) {
+	if taskType == INPUT {
+		plug := task.NewTask(0, func (data T) T {
+			return data
+		})
+		pl.inTasks[name] = plug
+		pl.tasks[name] = plug
+		pl.tasks[name + "soc"] = t
+		task.TaskConnector(plug, t)
+	} else if taskType == OUTPUT {
+		plug := task.NewTask(0, func (data R) R {
+			return data
+		})
+		pl.outTasks[name] = plug
+		pl.tasks[name] = plug
+		pl.tasks[name + "soc"] = t
+		task.TaskConnector(t, plug)
+	} else {
+		pl.tasks[name] = t
+	}
 
-func (p *Pipeline[T, R]) Run() {
-	go func() {
-		defer close(p.out)
-		for v := range p.in {
-			res := p.worker(v)
-			if _, ok := any(res).(struct{}); ok {
-				continue
-			}
-			p.out <- res
-		}
-	}()
 }
 
-func (p *Pipeline[T, R]) Stop() {
-	close(p.in)	
+func(pl *Pipeline) Run() {
+	for _, task := range pl.tasks {
+		task.Run()
+	}
 }
 
-func ConvPipeline(exch PlExchange) *Pipeline[*upbit.UpbitRawData, *PlData] {
-	return NewPipeline(1000, func (data *upbit.UpbitRawData) *PlData {
-		var plData PlData
-		plData.CheckPoints = []PlDataCheckpoint{
-			{
-				Name: "recv",
-				Ts: data.ReceiveTimestamp,
-				Err: nil,
-			},
-			{
-				Name: "main",
-				Ts: data.Timestamp,
-				Err: nil,
-			},
-			{
-				Name: "conv",
-				Ts: time.Now(),
-				Err: nil,
-			},
-		}
-		plData.Exchange = exch
-		switch data.Type {
-		case upbit.UPBIT_TICKER:
-			var d upbit.UpbitTicker
-			json.Unmarshal(*data.Bytes, &d)
-			plData.DataType = PL_DT_TICKER
-			plData.Payload = PlDataTicker {
-				Code: NewPlMktCode(d.Code, exch),
-				TradePrice: d.TradePrice,
-				SignedChangePrice: d.SignedChangePrice,
-				SignedChangeRate: d.SignedChangeRate,
-				AccTradePrice: d.AccTradePrice,
-				AccTradePrice24h: d.AccTradePrice24h,
-				Timestamp: d.Timestamp,
-			}
-		case upbit.UPBIT_TRADE:
-			var d upbit.UpbitTrade
-			json.Unmarshal(*data.Bytes, &d)
-			plData.DataType = PL_DT_TRADE
-			plData.Payload = PlDataTrade {
-				Code: NewPlMktCode(d.Code, exch),
-				Timestamp: d.Timestamp,
-				TradeTimestamp: d.TradeTimestamp,
-				TradePrice: d.TradePrice,
-				TradeVolume: d.TradeVolume,
-			}
-		case upbit.UPBIT_ORDERBOOK:
-			var d upbit.UpbitOrderbook
-			json.Unmarshal(*data.Bytes, &d)
-			plData.DataType = PL_DT_ORDERBOOK
-			plData.Payload = PlDataOrderbook {
-				Code: NewPlMktCode(d.Code, exch),
-				Timestamp: d.Timestamp,
-				TotalAskSize: d.TotalAskSize,
-				TotalBidSize: d.TotalBidSize,
-				OrderbookUnits: d.OrderbookUnits,
-			}
-		case upbit.UPBIT_CANDLE:
-			var d upbit.UpbitCandle
-			json.Unmarshal(*data.Bytes, &d)
-			plData.DataType = PL_DT_CANDLE
-			plData.Payload = PlDataCandle {
-				Code: NewPlMktCode(d.Code, exch),
-				CandleDateTimeUTC: d.CandleDateTimeUTC,
-				CandleDateTimeKST: d.CandleDateTimeKST,
-				OpeningPrice: d.OpeningPrice,
-				HighPrice: d.HighPrice,
-				LowPrice: d.LowPrice,
-				TradePrice: d.TradePrice,
-				CandleAccTradeVolume: d.CandleAccTradeVolume,
-				CandleAccTradePrice: d.CandleAccTradePrice,
-				Timestamp: d.Timestamp,
-			}
-		case upbit.UPBIT_ERROR:
-			var d upbit.UpbitError
-			json.Unmarshal(*data.Bytes, &d)
-			log.Println("UPBIT_ERROR: ", d)
-			plData.DataType = PL_DT_ERROR
-			plData.Payload = struct{}{}
-		}
-		return &plData
-	})	
+func(pl *Pipeline) Stop() {
+	for _, task := range pl.inTasks {
+		task.Run()
+	}
 }
 
-func LogPipeline(mode bool) *Pipeline[*PlData, *PlData] {
-	return NewPipeline(1000, func(data *PlData) *PlData {
-		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{Name: "log", Ts: time.Now(), Err: nil})
-		var exch string
-		var dt string
-		checkpoints := ""
-		for i, cp := range data.CheckPoints {
-			checkpoints += fmt.Sprintf("%s >> ", cp.Name)
-			if i != len(data.CheckPoints) -1 {
-				checkpoints += fmt.Sprintf("(+%f) >> ", data.CheckPoints[i+1].Ts.Sub(cp.Ts).Seconds())
-			}
-		}
-		checkpoints += fmt.Sprintf("[ACC +%f]", data.CheckPoints[len(data.CheckPoints)-1].Ts.Sub(data.CheckPoints[0].Ts).Seconds())
-		if data.Exchange == PL_EXCH_UPBIT {
-			exch = "UPBIT"
-		} else if data.Exchange == PL_EXCH_BITHUMB {
-			exch = "BITHUMB"
-		}
-		if data.DataType == PL_DT_TICKER {
-			dt = "TICKER"
-			payload := data.Payload.(PlDataTicker)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
-		} else if data.DataType == PL_DT_TRADE {
-			dt = "TRADE"
-			payload := data.Payload.(PlDataTrade)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
-		} else if data.DataType == PL_DT_ORDERBOOK {
-			dt = "ORDERBOOK"
-			payload := data.Payload.(PlDataOrderbook)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
-		} else if data.DataType == PL_DT_CANDLE {
-			dt = "CANDLE"
-			payload := data.Payload.(PlDataCandle)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
-		}
-		return data
+func PlInput[T any](pl *Pipeline, name string, data T) error {
+	t, ok := pl.inTasks[name]	
+	if !ok {
+		return errors.New("no input plug exist")
+	}
+	st, ok := t.(*task.Task[T, T])
+	if !ok {
+		return errors.New("input type not matches") 
+	}
+
+	st.In() <- data
+
+	return nil
+}
+
+func PlOutput[R any](pl *Pipeline, name string) (<-chan R, error) {
+	t, ok := pl.outTasks[name]	
+	if !ok {
+		return nil, errors.New("no output plug exist")
+	}
+	st, ok := t.(*task.Task[R, R])
+	if !ok {
+		return nil, errors.New("output type not matches") 
+	}
+	return st.Out(), nil
+}
+
+func GetPlTask[T any, R any](pl *Pipeline, name string) (*task.Task[T, R], error) {
+	t, ok := pl.tasks[name]
+	if !ok {
+		return nil, errors.New("no task exist")
+	}
+
+	st, ok := t.(*task.Task[T, R])
+	if !ok {
+		return nil, errors.New("type not matches") 
+	}
+
+	return st, nil
+}
+
+func CryptoPipeline() (*Pipeline, error) {
+	pl := NewPipeline()
+	nullTask := task.NullTask()
+	PlRegister(pl, "null", nullTask, OUTPUT)
+	logTask := task.LogTask(false)
+	PlRegister(pl, "log", logTask, INTERNAL)
+	conv1 := task.ConvTask(task.PL_EXCH_UPBIT)
+	PlRegister(pl, "in1", conv1, INPUT)
+	conv2 := task.ConvTask(task.PL_EXCH_BITHUMB)
+	PlRegister(pl, "in2", conv2, INPUT)
+
+	task.TaskConnector(conv1, logTask)
+	task.TaskConnector(conv2, logTask)
+	task.TaskMetricConnector(logTask, nullTask, time.Second)
+
+	return pl, nil
+}
+
+func CryptoProdPipeline() (*Pipeline, error) {
+	pl := NewPipeline()
+	nullTask := task.NullTask()
+	PlRegister(pl, "null", nullTask, OUTPUT)
+	logTask := task.LogTask(false)
+	PlRegister(pl, "log", logTask, INTERNAL)
+	prodTask, err := kafka.ProduceTask(kafka.ProduceUnitConfig{
+		Brokers: []string{os.Getenv("KAFKA_BROKER")},
 	})
+	if err != nil {
+		return nil, err
+	}
+	PlRegister(pl, "pd", prodTask, INTERNAL)
+	conv1 := task.ConvTask(task.PL_EXCH_UPBIT)
+	PlRegister(pl, "in1", conv1, INPUT)
+	conv2 := task.ConvTask(task.PL_EXCH_BITHUMB)
+	PlRegister(pl, "in2", conv2, INPUT)
+
+	task.TaskConnector(conv1, prodTask)
+	task.TaskConnector(conv2, prodTask)
+	task.TaskConnector(prodTask, logTask)
+	task.TaskMetricConnector(logTask, nullTask, time.Second)
+
+	return pl, nil
 }
 
-func NullPipeline() *Pipeline[*PlData, struct{}] {
-	return NewPipeline(0, func(data *PlData) struct{} {
-		return struct{}{}
-	})	
+func DiffPipeline() (*Pipeline, error) {
+	pl := NewPipeline()
+	conv1 := task.ConvTask(task.PL_EXCH_UPBIT)
+	PlRegister(pl, "in1", conv1, INPUT)
+	conv2 := task.ConvTask(task.PL_EXCH_BITHUMB)
+	PlRegister(pl, "in2", conv2, INPUT)
+	log.Println("state")
+	state := calc.StateTask(task.PL_EXCH_UPBIT, task.PL_EXCH_BITHUMB)
+	PlRegister(pl, "state", state, INTERNAL)
+	log.Println("cal")
+	cal := calc.CalcTask(task.PL_EXCH_UPBIT, task.PL_EXCH_BITHUMB)
+	PlRegister(pl, "cal", cal, INTERNAL)
+	nullTask := task.NullTask()
+	PlRegister(pl, "null", nullTask, OUTPUT)
+
+	task.TaskConnector(conv1, state)
+	task.TaskConnector(conv2, state)
+	task.TaskConnector(state, cal)
+
+	return pl, nil
 }
+
 

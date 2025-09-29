@@ -3,14 +3,10 @@ package main
 import (
 	"hub/pkg/command"
 	"hub/pkg/command/api"
-	"hub/pkg/interface/upbit"
+	"hub/pkg/gateway"
 	"hub/pkg/pipeline"
-	"hub/pkg/pipeline/kafka"
 	"io"
-	"net/url"
-	"time"
 
-	// "hub/pkg/pipeline/calc"
 	"log"
 	"os"
 
@@ -39,105 +35,26 @@ func main() {
 	cr.Start()
 
 	// configure interfaces
-	uif, uch := upbit.NewUpbitIF(
-		upbit.UpbitIFConfig{
-			AccessKey: os.Getenv("UPBIT_ACCESS_KEY"),
-			SecretKey: os.Getenv("UPBIT_SECRET_KEY"),
-			QuoUrl: url.URL{Scheme: "wss", Host: "api.upbit.com", Path: "websocket/v1"},
-			ExcUrl: url.URL{Scheme: "wss", Host: "api.upbit.com", Path: "websocket/v1/private"},
-			Options: []upbit.UpbitIFDataOption{
-				{
-					Type: upbit.UPBIT_TICKER,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,	
-					},
-				},
-				{
-					Type: upbit.UPBIT_TRADE,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,	
-					},
-				},
-				{
-					Type: upbit.UPBIT_ORDERBOOK,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,
-						OrderbookUnitSize: 5,
-					},
-				},
-				{
-					Type: upbit.UPBIT_CANDLE,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,
-						CandleInterval: "1s",
-					},
-				},
-			},
-		},
-	)
+	uif, uch := gateway.NewUpbitGateway()
 	uif.Run()
 
-	bif, bch := upbit.NewUpbitIF(
-		upbit.UpbitIFConfig{
-			AccessKey: os.Getenv("BITHUMB_ACCESS_KEY"),
-			SecretKey: os.Getenv("BITHUMB_SECRET_KEY"),
-			QuoUrl: url.URL{Scheme: "wss", Host: "ws-api.bithumb.com", Path: "websocket/v1"},
-			ExcUrl: url.URL{Scheme: "wss", Host: "ws-api.bithumb.com", Path: "websocket/v1/private"},
-			Options: []upbit.UpbitIFDataOption{
-				{
-					Type: upbit.UPBIT_TICKER,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,	
-					},
-				},
-				{
-					Type: upbit.UPBIT_TRADE,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,	
-					},
-				},
-				{
-					Type: upbit.UPBIT_ORDERBOOK,
-					Option: upbit.UpbitDTOption{
-						IsOnlyRealtime: true,
-						OrderbookUnitSize: 5,
-					},
-				},
-			},
-		},
-	)
+	bif, bch := gateway.NewBithumbGateway()
 	bif.Run()
-
-	// pipelines
-	nullPipe := pipeline.NullPipeline()
-	nullPipe.Run()
-	defer nullPipe.Stop()
-
-	logPipe := pipeline.LogPipeline(false)
-	logPipe.Run()
-	defer logPipe.Stop()
-
-	producePipe, err := kafka.ProducePipeline(kafka.ProduceUnitConfig{
-		Brokers: []string{os.Getenv("KAFKA_BROKER")},
-	})
+	
+	var pl *pipeline.Pipeline
+	switch (os.Getenv("MODE")) {
+	case "PRODUCTION":
+		pl, err = pipeline.CryptoProdPipeline()
+	case "DIFF":
+		pl, err = pipeline.DiffPipeline()
+	default:
+		pl, err = pipeline.CryptoPipeline()
+		
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	producePipe.Run()
-	defer producePipe.Stop()
-
-	upbitConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_UPBIT)
-	upbitConvPipe.Run()
-	defer upbitConvPipe.Stop()
-	pipeline.ConnectPipeline(upbitConvPipe, logPipe)
-
-	bithumbConvPipe := pipeline.ConvPipeline(pipeline.PL_EXCH_BITHUMB)
-	bithumbConvPipe.Run()
-	defer bithumbConvPipe.Stop()
-	pipeline.ConnectPipeline(bithumbConvPipe, logPipe)
-
-	// pipeline.ConnectPipeline(producePipe, logPipe)
-	pipeline.MetricPipeline(logPipe, nullPipe, time.Second)
+	pl.Run()
 
 	for {
 		select {
@@ -165,9 +82,13 @@ func main() {
 				bif.Reset()
 			}
 		case data := <-uch:
-			upbitConvPipe.In() <- &data
+			if err := pipeline.PlInput(pl, "in1", &data); err != nil {
+				log.Println(err)
+			}
 		case data := <-bch:
-			bithumbConvPipe.In() <- &data
+			if err := pipeline.PlInput(pl, "in2", &data); err != nil {
+				log.Println(err)
+			}
 		}
 	}
 }

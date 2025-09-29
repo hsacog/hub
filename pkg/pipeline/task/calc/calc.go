@@ -2,18 +2,18 @@ package calc
 
 import (
 	"fmt"
-	. "hub/pkg/pipeline"
+	. "hub/pkg/pipeline/task"
 	"log"
 	"math"
 	"sort"
 )
 
-func StatePipeline(exch ...PlExchange) *Pipeline[*PlData, PlState] {
+func StateTask(exch ...PlExchange) *Task[*PlData, PlState] {
 	state := make(PlState)
 	for _, v := range exch {
 		state[v] = make(map[PlMktCode]float64)
 	}
-	return NewPipeline(0, func (data *PlData) PlState {
+	return NewTask(0, func (data *PlData) PlState {
 		if data.DataType == PL_DT_TICKER {
 			code := data.Payload.(PlDataTicker).Code
 			price := data.Payload.(PlDataTicker).TradePrice
@@ -23,8 +23,8 @@ func StatePipeline(exch ...PlExchange) *Pipeline[*PlData, PlState] {
 	})
 }
 
-func CalcPipeline(ex1 PlExchange, ex2 PlExchange) *Pipeline[PlState, struct{}] {
-	return NewPipeline(0, func (state PlState) struct{} {
+func CalcTask(ex1 PlExchange, ex2 PlExchange) *Task[PlState, struct{}] {
+	return NewTask(0, func (state PlState) struct{} {
 		// compare ex1 and ex2 using both existing mktcodes		
 		type Cmp struct {
 			code PlMktCode

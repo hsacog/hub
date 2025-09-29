@@ -2,7 +2,7 @@ package kafka
 
 import (
 	"encoding/json"
-	. "hub/pkg/pipeline"
+	. "hub/pkg/pipeline/task"
 	"log"
 	"time"
 
@@ -96,7 +96,7 @@ func GetPartition(c string) int32 {
 	}
 }
 
-func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], error) {
+func ProduceTask(config ProduceUnitConfig) (*Task[*PlData, *PlData], error) {
 	cf := sarama.NewConfig()
 	cf.Producer.RequiredAcks = sarama.NoResponse
 	cf.Producer.Compression = sarama.CompressionSnappy
@@ -116,7 +116,7 @@ func ProducePipeline(config ProduceUnitConfig) (*Pipeline[*PlData, *PlData], err
 		}
 	}()
 	
-	return NewPipeline(1000, func (data *PlData) *PlData {
+	return NewTask(1000, func (data *PlData) *PlData {
 		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{Name: "pd", Ts: time.Now(), Err: nil})
 		var err error = nil
 		var msg []byte

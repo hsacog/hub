@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	"fmt"
 	"hub/pkg/pipeline/task"
 	"hub/pkg/pipeline/task/calc"
 	"hub/pkg/pipeline/task/kafka"
@@ -18,15 +19,23 @@ const (
 	OUTPUT
 	INTERNAL
 )
+type PlUnit[T any, R any] struct {
+	name string
+	task *task.Task[T, R]
+}
+func NewPlUnit[T any, R any](name string, t *task.Task[T, R]) *PlUnit[T, R] {
+	return &PlUnit[T, R] {
+		name: name,
+		task: t,
+	}
+}
+
 
 type Pipeline struct {
 	inTasks map[string]task.Tasker
 	outTasks map[string]task.Tasker
 	tasks map[string]task.Tasker
-}
-
-type PlInPlug[T any] struct {
-	task *task.Task[T, T]
+	ch chan PlMeta
 }
 
 func NewPipeline() *Pipeline {
@@ -34,51 +43,88 @@ func NewPipeline() *Pipeline {
 		inTasks: make(map[string]task.Tasker),
 		outTasks: make(map[string]task.Tasker),
 		tasks: make(map[string]task.Tasker),
+		ch: make(chan PlMeta, 1000),
 	}
 }
 
-func(pl *Pipeline) Register(name string, task task.Tasker, taskType PlTaskType) {
-	pl.tasks[name] = task
+func PlRegister[T any, R any](pl *Pipeline, pu *PlUnit[T, R], taskType PlTaskType) {
 	if taskType == INPUT {
-		pl.inTasks[name] = task
-	} else if taskType == OUTPUT {
-		pl.outTasks[name] = task
-	}
-}
-
-func PlRegister[T any, R any](pl *Pipeline, name string, t *task.Task[T, R], taskType PlTaskType) {
-	if taskType == INPUT {
-		plug := task.NewTask(0, func (data T) T {
+		plug := NewPlUnit(pu.name + "_soc", task.NewTask(0, func (data T) T {
 			return data
-		})
-		pl.inTasks[name] = plug
-		pl.tasks[name] = plug
-		pl.tasks[name + "soc"] = t
-		task.TaskConnector(plug, t)
+		}))
+		
+		pl.inTasks[pu.name] = plug.task
+		pl.tasks[pu.name] = plug.task
+		pl.tasks[pu.name + "soc"] = pu.task
+		PlPipe(pl, plug, pu)
 	} else if taskType == OUTPUT {
-		plug := task.NewTask(0, func (data R) R {
+		plug := NewPlUnit(pu.name + "_soc", task.NewTask(0, func (data R) R {
 			return data
-		})
-		pl.outTasks[name] = plug
-		pl.tasks[name] = plug
-		pl.tasks[name + "soc"] = t
-		task.TaskConnector(t, plug)
+		}))
+		pl.outTasks[pu.name] = plug.task
+		pl.tasks[pu.name] = plug.task
+		pl.tasks[pu.name + "soc"] = pu.task
+		PlPipe(pl, pu, plug)
 	} else {
-		pl.tasks[name] = t
+		pl.tasks[pu.name] = pu.task
 	}
 
+}
+
+func PlPipe[T, R, S any](pl *Pipeline, from *PlUnit[T, R], to *PlUnit[R, S]) {
+	go func() {
+		defer to.task.Stop()
+		for v := range from.task.Out() {
+			to.task.In() <- v
+		}
+	}()
+}
+func PlMetricPipe[T, R, S any](pl *Pipeline, from *PlUnit[T, R], to *PlUnit[R, S], dur time.Duration) {
+	ticker := time.NewTicker(dur)	
+	var cnt int64 = 0
+	go func() {
+		defer to.task.Stop()
+		for {
+			select {
+			case v, ok := <-from.task.Out():
+				if !ok {
+					return
+				} else {
+					to.task.In() <- v
+					cnt += 1
+				}
+			case t := <-ticker.C:
+				pl.ch <- PlMeta {
+					MetaType: PL_MT_METRIC,
+					Payload: fmt.Sprintf("[METRIC] DUR(%s) TIME(%s) THROUGHPUT: %d\n", dur.String(), t.String(), cnt),
+				}
+				cnt = 0	
+			}
+		}
+	}()
 }
 
 func(pl *Pipeline) Run() {
 	for _, task := range pl.tasks {
 		task.Run()
 	}
+	go func() {
+		for m := range pl.ch {
+			switch m.MetaType {
+			case PL_MT_ERROR:
+				log.Printf("[PL_MT_ERROR] %v", m)
+			case PL_MT_METRIC:
+				log.Printf("[PL_MT_METRIC] %v", m)
+			}
+		}
+	}()
 }
 
 func(pl *Pipeline) Stop() {
 	for _, task := range pl.inTasks {
-		task.Run()
+		task.Stop()
 	}
+	close(pl.ch)
 }
 
 func PlInput[T any](pl *Pipeline, name string, data T) error {
@@ -96,16 +142,23 @@ func PlInput[T any](pl *Pipeline, name string, data T) error {
 	return nil
 }
 
-func PlOutput[R any](pl *Pipeline, name string) (<-chan R, error) {
+func PlOutput[R any](pl *Pipeline, name string, ch chan<- R) error {
 	t, ok := pl.outTasks[name]	
 	if !ok {
-		return nil, errors.New("no output plug exist")
+		return errors.New("no output plug exist")
 	}
 	st, ok := t.(*task.Task[R, R])
 	if !ok {
-		return nil, errors.New("output type not matches") 
+		return errors.New("output type not matches") 
 	}
-	return st.Out(), nil
+	go func() {
+		defer close(ch)
+		for v := range st.Out() {
+			ch <- v
+		}	
+	}()
+
+	return nil
 }
 
 func GetPlTask[T any, R any](pl *Pipeline, name string) (*task.Task[T, R], error) {
@@ -124,66 +177,74 @@ func GetPlTask[T any, R any](pl *Pipeline, name string) (*task.Task[T, R], error
 
 func CryptoPipeline() (*Pipeline, error) {
 	pl := NewPipeline()
-	nullTask := task.NullTask()
-	PlRegister(pl, "null", nullTask, OUTPUT)
-	logTask := task.LogTask(false)
-	PlRegister(pl, "log", logTask, INTERNAL)
-	conv1 := task.ConvTask(task.PL_EXCH_UPBIT)
-	PlRegister(pl, "in1", conv1, INPUT)
-	conv2 := task.ConvTask(task.PL_EXCH_BITHUMB)
-	PlRegister(pl, "in2", conv2, INPUT)
+	conv1 := NewPlUnit("in1", task.ConvTask(task.PL_EXCH_UPBIT))
+	PlRegister(pl, conv1, INPUT)
+	conv2 := NewPlUnit("in2", task.ConvTask(task.PL_EXCH_BITHUMB))
+	PlRegister(pl, conv2, INPUT)
+	logUnit := NewPlUnit("log", task.LogTask(true))
+	PlRegister(pl, logUnit, INTERNAL)
+	nullUnit := NewPlUnit("null", task.NullTask())
+	PlRegister(pl, nullUnit, OUTPUT)
 
-	task.TaskConnector(conv1, logTask)
-	task.TaskConnector(conv2, logTask)
-	task.TaskMetricConnector(logTask, nullTask, time.Second)
+	PlPipe(pl, conv1, logUnit)
+	PlPipe(pl, conv2, logUnit)
+	PlMetricPipe(pl, logUnit, nullUnit, time.Second)
 
 	return pl, nil
 }
 
 func CryptoProdPipeline() (*Pipeline, error) {
 	pl := NewPipeline()
-	nullTask := task.NullTask()
-	PlRegister(pl, "null", nullTask, OUTPUT)
-	logTask := task.LogTask(false)
-	PlRegister(pl, "log", logTask, INTERNAL)
+	conv1 := NewPlUnit("in1", task.ConvTask(task.PL_EXCH_UPBIT))
+	PlRegister(pl, conv1, INPUT)
+	conv2 := NewPlUnit("in2", task.ConvTask(task.PL_EXCH_BITHUMB))
+	PlRegister(pl, conv2, INPUT)
 	prodTask, err := kafka.ProduceTask(kafka.ProduceUnitConfig{
 		Brokers: []string{os.Getenv("KAFKA_BROKER")},
 	})
 	if err != nil {
 		return nil, err
 	}
-	PlRegister(pl, "pd", prodTask, INTERNAL)
-	conv1 := task.ConvTask(task.PL_EXCH_UPBIT)
-	PlRegister(pl, "in1", conv1, INPUT)
-	conv2 := task.ConvTask(task.PL_EXCH_BITHUMB)
-	PlRegister(pl, "in2", conv2, INPUT)
+	prodUnit := NewPlUnit("pd", prodTask)
+	PlRegister(pl, prodUnit, INTERNAL)
+	logUnit := NewPlUnit("log", task.LogTask(true))
+	PlRegister(pl, logUnit, INTERNAL)
+	nullUnit := NewPlUnit("null", task.NullTask())
+	PlRegister(pl, nullUnit, OUTPUT)
 
-	task.TaskConnector(conv1, prodTask)
-	task.TaskConnector(conv2, prodTask)
-	task.TaskConnector(prodTask, logTask)
-	task.TaskMetricConnector(logTask, nullTask, time.Second)
+	PlPipe(pl, conv1, prodUnit)
+	PlPipe(pl, conv2, prodUnit)
+	PlPipe(pl, prodUnit, logUnit)
+	PlMetricPipe(pl, logUnit, nullUnit, time.Second)
 
 	return pl, nil
 }
 
 func DiffPipeline() (*Pipeline, error) {
 	pl := NewPipeline()
-	conv1 := task.ConvTask(task.PL_EXCH_UPBIT)
-	PlRegister(pl, "in1", conv1, INPUT)
-	conv2 := task.ConvTask(task.PL_EXCH_BITHUMB)
-	PlRegister(pl, "in2", conv2, INPUT)
-	log.Println("state")
-	state := calc.StateTask(task.PL_EXCH_UPBIT, task.PL_EXCH_BITHUMB)
-	PlRegister(pl, "state", state, INTERNAL)
-	log.Println("cal")
-	cal := calc.CalcTask(task.PL_EXCH_UPBIT, task.PL_EXCH_BITHUMB)
-	PlRegister(pl, "cal", cal, INTERNAL)
-	nullTask := task.NullTask()
-	PlRegister(pl, "null", nullTask, OUTPUT)
 
-	task.TaskConnector(conv1, state)
-	task.TaskConnector(conv2, state)
-	task.TaskConnector(state, cal)
+	conv1 := NewPlUnit("in1", task.ConvTask(task.PL_EXCH_UPBIT))
+	PlRegister(pl, conv1, INPUT)
+
+	conv2 := NewPlUnit("in2", task.ConvTask(task.PL_EXCH_BITHUMB))
+	PlRegister(pl, conv2, INPUT)
+
+	logUnit := NewPlUnit("log", task.LogTask(false))
+	PlRegister(pl, logUnit, INTERNAL)
+
+	state := NewPlUnit("state", calc.StateTask(task.PL_EXCH_UPBIT, task.PL_EXCH_BITHUMB))
+	PlRegister(pl, state, INTERNAL)
+
+	cal := NewPlUnit("calc", calc.CalcTask(task.PL_EXCH_UPBIT, task.PL_EXCH_BITHUMB))
+	PlRegister(pl, cal, INTERNAL)
+
+	nullUnit := NewPlUnit("null", task.NullTask())
+	PlRegister(pl, nullUnit, OUTPUT)
+
+	PlPipe(pl, conv1, logUnit)
+	PlPipe(pl, conv2, logUnit)
+	PlPipe(pl, logUnit, state)
+	PlPipe(pl, state, cal)
 
 	return pl, nil
 }

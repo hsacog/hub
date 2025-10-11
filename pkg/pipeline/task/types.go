@@ -1,6 +1,7 @@
 package task
 
 import (
+	"fmt"
 	"hub/pkg/gateway/upbit"
 	"strings"
 	"time"
@@ -24,6 +25,14 @@ const (
 	PL_DT_CANDLE
 	PL_DT_ERROR
 )
+var PlDataTypeMap = map[PlDataType]string{
+	PL_DT_TICKER: "TICKER",
+	PL_DT_TRADE: "TRADE",
+	PL_DT_ORDERBOOK: "ORDERBOOK",
+	PL_DT_CANDLE: "CANDLE",
+	PL_DT_ERROR: "ERROR",
+}
+
 type PlMktCode struct {
 	C1, C2 string
 }
@@ -87,6 +96,20 @@ type PlData struct {
 	DataType PlDataType
 	Payload any
 	CheckPoints []PlDataCheckpoint
+}
+func (pd PlData) AddCp(n string, err error) {
+	pd.CheckPoints = append(pd.CheckPoints, PlDataCheckpoint{Name: n, Ts: time.Now(), Err: err})
+}
+func (pd PlData) LogCp() string {
+	cplog := ""
+	for i, cp := range pd.CheckPoints {
+		cplog += fmt.Sprintf("%s >> ", cp.Name)
+		if i != len(pd.CheckPoints) - 1 {
+			cplog += fmt.Sprintf("(+%f) >> ", pd.CheckPoints[i+1].Ts.Sub(cp.Ts).Seconds())
+		}
+	}
+	cplog += fmt.Sprintf("[ACC +%f]", pd.CheckPoints[len(pd.CheckPoints)-1].Ts.Sub(pd.CheckPoints[0].Ts).Seconds())
+	return cplog
 }
 type PlState map[PlExchange]map[PlMktCode]float64
 func (s PlState) Copy() PlState {

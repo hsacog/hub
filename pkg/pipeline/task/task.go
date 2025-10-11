@@ -2,7 +2,6 @@ package task
 
 import (
 	"encoding/json"
-	"fmt"
 	"hub/pkg/gateway/upbit"
 	"log"
 	"sync"
@@ -94,12 +93,8 @@ func ConvTask(exch PlExchange) *Task[*upbit.UpbitRawData, *PlData] {
 				Ts: data.Timestamp,
 				Err: nil,
 			},
-			{
-				Name: "conv",
-				Ts: time.Now(),
-				Err: nil,
-			},
 		}
+		plData.AddCp("conv", nil)
 		plData.Exchange = exch
 		switch data.Type {
 		case upbit.UPBIT_TICKER:
@@ -166,42 +161,26 @@ func ConvTask(exch PlExchange) *Task[*upbit.UpbitRawData, *PlData] {
 
 func LogTask(mode bool) *Task[*PlData, *PlData] {
 	return NewTask(1000, func(data *PlData) *PlData {
-		data.CheckPoints = append(data.CheckPoints, PlDataCheckpoint{Name: "log", Ts: time.Now(), Err: nil})
-		var exch string
-		var dt string
-		checkpoints := ""
-		for i, cp := range data.CheckPoints {
-			checkpoints += fmt.Sprintf("%s >> ", cp.Name)
-			if i != len(data.CheckPoints) -1 {
-				checkpoints += fmt.Sprintf("(+%f) >> ", data.CheckPoints[i+1].Ts.Sub(cp.Ts).Seconds())
-			}
-		}
-		checkpoints += fmt.Sprintf("[ACC +%f]", data.CheckPoints[len(data.CheckPoints)-1].Ts.Sub(data.CheckPoints[0].Ts).Seconds())
-		if data.Exchange == PL_EXCH_UPBIT {
-			exch = "UPBIT"
-		} else if data.Exchange == PL_EXCH_BITHUMB {
-			exch = "BITHUMB"
-		}
+		exch := PlExchangeMap[data.Exchange]
+		dt := PlDataTypeMap[data.DataType]
+		data.AddCp("log", nil)
+		checkpoints := data.LogCp()
 		if data.DataType == PL_DT_TICKER {
-			dt = "TICKER"
 			payload := data.Payload.(PlDataTicker)
 			if mode {
 				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 			}
 		} else if data.DataType == PL_DT_TRADE {
-			dt = "TRADE"
 			payload := data.Payload.(PlDataTrade)
 			if mode {
 				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 			}
 		} else if data.DataType == PL_DT_ORDERBOOK {
-			dt = "ORDERBOOK"
 			payload := data.Payload.(PlDataOrderbook)
 			if mode {
 				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
 			}
 		} else if data.DataType == PL_DT_CANDLE {
-			dt = "CANDLE"
 			payload := data.Payload.(PlDataCandle)
 			if mode {
 				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)

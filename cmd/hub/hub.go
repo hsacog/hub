@@ -43,7 +43,7 @@ func main() {
 	
 	var pl *pipeline.Pipeline
 	switch (os.Getenv("MODE")) {
-	case "PRODUCTION":
+	case "PROD":
 		pl, err = pipeline.CryptoProdPipeline()
 	case "DIFF":
 		pl, err = pipeline.DiffPipeline()

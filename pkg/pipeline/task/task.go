@@ -2,8 +2,10 @@ package task
 
 import (
 	"encoding/json"
+	"fmt"
 	"hub/pkg/gateway/upbit"
 	"log"
+	"slices"
 	"sync"
 	"time"
 )
@@ -26,35 +28,6 @@ func NewTask[T any, R any](buf int, worker func(T) R) *Task[T, R] {
 		out:    make(chan R, buf),
 		worker: worker,
 	}
-}
-func TaskConnector[T, R, S any](from *Task[T, R], to *Task[R, S]) {
-	go func() {
-		defer to.Stop()
-		for v := range from.Out() {
-			to.In() <- v
-		}
-	}()
-}
-func TaskMetricConnector[T, R, S any](from *Task[T, R], to *Task[R, S], dur time.Duration) {
-	ticker := time.NewTicker(dur)	
-	var cnt int64 = 0
-	go func() {
-		defer to.Stop()
-		for {
-			select {
-			case v, ok := <-from.Out():
-				if !ok {
-					return
-				} else {
-					to.In() <- v
-					cnt += 1
-				}
-			case t := <-ticker.C:
-				log.Printf("[METRIC] DUR(%s) TIME(%s) THROUGHPUT: %d\n", dur.String(), t.String(), cnt)
-				cnt = 0	
-			}
-		}
-	}()
 }
 
 func (p *Task[T, R]) In() chan<- T { return p.in }
@@ -110,6 +83,7 @@ func ConvTask(exch PlExchange) *Task[*upbit.UpbitRawData, *PlData] {
 				AccTradePrice24h: d.AccTradePrice24h,
 				Timestamp: d.Timestamp,
 			}
+			plData.Timestamp = d.Timestamp // use received data timestamp
 		case upbit.UPBIT_TRADE:
 			var d upbit.UpbitTrade
 			json.Unmarshal(*data.Bytes, &d)
@@ -121,6 +95,7 @@ func ConvTask(exch PlExchange) *Task[*upbit.UpbitRawData, *PlData] {
 				TradePrice: d.TradePrice,
 				TradeVolume: d.TradeVolume,
 			}
+			plData.Timestamp = d.Timestamp // use received data timestamp
 		case upbit.UPBIT_ORDERBOOK:
 			var d upbit.UpbitOrderbook
 			json.Unmarshal(*data.Bytes, &d)
@@ -132,6 +107,7 @@ func ConvTask(exch PlExchange) *Task[*upbit.UpbitRawData, *PlData] {
 				TotalBidSize: d.TotalBidSize,
 				OrderbookUnits: d.OrderbookUnits,
 			}
+			plData.Timestamp = d.Timestamp // use received data timestamp
 		case upbit.UPBIT_CANDLE:
 			var d upbit.UpbitCandle
 			json.Unmarshal(*data.Bytes, &d)
@@ -148,50 +124,64 @@ func ConvTask(exch PlExchange) *Task[*upbit.UpbitRawData, *PlData] {
 				CandleAccTradePrice: d.CandleAccTradePrice,
 				Timestamp: d.Timestamp,
 			}
+			plData.Timestamp = d.Timestamp // use received data timestamp
 		case upbit.UPBIT_ERROR:
 			var d upbit.UpbitError
 			json.Unmarshal(*data.Bytes, &d)
 			log.Println("UPBIT_ERROR: ", d)
 			plData.DataType = PL_DT_ERROR
 			plData.Payload = struct{}{}
+			plData.Timestamp = time.Now().UnixMilli() // use system timestamp
 		}
 		return &plData
 	})	
 }
 
-func LogTask(mode bool) *Task[*PlData, *PlData] {
+type LogMode int8
+const (
+	LOG_METRIC LogMode = iota
+	LOG_VIEW
+	LOG_NONE
+) 
+
+func LogTask(mode LogMode, dts ...PlDataType) *Task[*PlData, *PlData] {
 	return NewTask(1000, func(data *PlData) *PlData {
+		data.AddCp("log", nil)
 		exch := PlExchangeMap[data.Exchange]
 		dt := PlDataTypeMap[data.DataType]
-		data.AddCp("log", nil)
-		checkpoints := data.LogCp()
+		var mktCode PlMktCode
+		var value string
 		if data.DataType == PL_DT_TICKER {
 			payload := data.Payload.(PlDataTicker)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
+			mktCode = payload.Code
+			value = fmt.Sprintf("<%s> %f", time.UnixMilli(payload.Timestamp).String(), payload.TradePrice)
 		} else if data.DataType == PL_DT_TRADE {
 			payload := data.Payload.(PlDataTrade)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
+			mktCode = payload.Code
+			value = fmt.Sprintf("<%s> %f", time.UnixMilli(payload.Timestamp).String(), payload.TradePrice)
 		} else if data.DataType == PL_DT_ORDERBOOK {
 			payload := data.Payload.(PlDataOrderbook)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
-			}
+			mktCode = payload.Code
+			value = fmt.Sprintf("%v", payload)
 		} else if data.DataType == PL_DT_CANDLE {
 			payload := data.Payload.(PlDataCandle)
-			if mode {
-				log.Printf("%s %s %s %v", exch, dt, payload.Code, checkpoints)
+			mktCode = payload.Code
+			value = fmt.Sprintf("<%s> %f %f %f %f", time.UnixMilli(payload.Timestamp).String(), payload.OpeningPrice, payload.HighPrice, payload.LowPrice, payload.TradePrice)
+		}
+
+		if slices.Contains(dts, data.DataType) {
+			if mode == LOG_METRIC {
+				log.Printf("%s %s %s %v", exch, dt, mktCode, data.LogCp())
+			} else if mode == LOG_VIEW {
+				log.Printf("%s %s %s", exch, dt, value)
 			}
 		}
 		return data
 	})
 }
 
-func NullTask() *Task[*PlData, struct{}] {
-	return NewTask(0, func(data *PlData) struct{} {
+func NullTask[T any]() *Task[T, struct{}] {
+	return NewTask(0, func(data T) struct{} {
 		return struct{}{}
 	})	
 }

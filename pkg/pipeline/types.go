@@ -7,5 +7,5 @@ const (
 )
 type PlMeta struct {
 	MetaType PlMetaType
-	Payload any
+	Payload string
 }

@@ -49,6 +49,12 @@ func NewPlMktCode(code string, exch PlExchange) PlMktCode {
 	
 	return mktCode
 }
+
+type PlDataPayload interface {
+	Key() string
+	Time() time.Time
+}
+
 type PlDataTicker struct {
 	Code PlMktCode
 	TradePrice float64
@@ -58,12 +64,24 @@ type PlDataTicker struct {
 	AccTradePrice24h float64
 	Timestamp int64
 }
+func (p PlDataTicker) Key() string {
+	return p.Code.C1 + p.Code.C2
+}
+func (p PlDataTicker) Time() time.Time {
+	return time.UnixMilli(p.Timestamp)
+}
 type PlDataTrade struct {
 	Code PlMktCode
 	TradeTimestamp int64
 	TradePrice float64
 	TradeVolume float64
 	Timestamp int64
+}
+func (p PlDataTrade) Key() string {
+	return p.Code.C1 + p.Code.C2
+}
+func (p PlDataTrade) Time() time.Time {
+	return time.UnixMilli(p.Timestamp)
 }
 type PlDataOrderbookUnit = upbit.UpbitOrderbookUnit
 type PlDataOrderbook struct {
@@ -72,6 +90,12 @@ type PlDataOrderbook struct {
 	TotalAskSize float64
 	TotalBidSize float64
 	OrderbookUnits []PlDataOrderbookUnit
+}
+func (p PlDataOrderbook) Key() string {
+	return p.Code.C1 + p.Code.C2
+}
+func (p PlDataOrderbook) Time() time.Time {
+	return time.UnixMilli(p.Timestamp)
 }
 type PlDataCandle struct {
 	Code PlMktCode
@@ -85,6 +109,12 @@ type PlDataCandle struct {
 	CandleAccTradePrice  float64
 	Timestamp int64
 }
+func (p PlDataCandle) Key() string {
+	return p.Code.C1 + p.Code.C2
+}
+func (p PlDataCandle) Time() time.Time {
+	return time.UnixMilli(p.Timestamp)
+}
 
 type PlDataCheckpoint struct {
 	Name string
@@ -96,11 +126,13 @@ type PlData struct {
 	DataType PlDataType
 	Payload any
 	CheckPoints []PlDataCheckpoint
+	Timestamp int64
 }
-func (pd PlData) AddCp(n string, err error) {
+
+func (pd *PlData) AddCp(n string, err error) {
 	pd.CheckPoints = append(pd.CheckPoints, PlDataCheckpoint{Name: n, Ts: time.Now(), Err: err})
 }
-func (pd PlData) LogCp() string {
+func (pd *PlData) LogCp() string {
 	cplog := ""
 	for i, cp := range pd.CheckPoints {
 		cplog += fmt.Sprintf("%s >> ", cp.Name)
@@ -110,16 +142,4 @@ func (pd PlData) LogCp() string {
 	}
 	cplog += fmt.Sprintf("[ACC +%f]", pd.CheckPoints[len(pd.CheckPoints)-1].Ts.Sub(pd.CheckPoints[0].Ts).Seconds())
 	return cplog
-}
-type PlState map[PlExchange]map[PlMktCode]float64
-func (s PlState) Copy() PlState {
-    copyState := make(PlState, len(s))
-    for exch, inner := range s {
-        innerCopy := make(map[PlMktCode]float64, len(inner))
-        for code, val := range inner {
-            innerCopy[code] = val
-        }
-        copyState[exch] = innerCopy
-    }
-    return copyState
 }

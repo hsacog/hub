@@ -47,9 +47,12 @@ func main() {
 		pl, err = pipeline.CryptoProdPipeline()
 	case "DIFF":
 		pl, err = pipeline.DiffPipeline()
-	default:
+	case "FLUC":
+		pl, err = pipeline.FlucPipeline()
+	case "DEFAULT":
 		pl, err = pipeline.CryptoPipeline()
-		
+	default:
+		log.Fatal("pipeline not specified")
 	}
 	if err != nil {
 		log.Fatal(err)
